@@ -24,9 +24,9 @@ UN INTERO gestito come segue:
 [1,0] 1010 <-- cella normale colorata da giocatore 1 e occupata da giocatore 1
 [1,1] 0111 <-- muro scoperto da entrambi i giocatori;
 
-per partita, lista informazione giocatore:
+per partita, array (o lista?) informazione giocatore:
 
-nodo: posizione_x, posizione_y, num celle colorate
+cella (o nodo?): posizione_x, posizione_y, num celle colorate
 
 
 mappe: 4 preset 16x16 scelti casualmente dal server (forse?)
@@ -56,6 +56,14 @@ typedef struct Maps_list_node{
       struct Maps_list_node* next;
 
 }Maps_list_node;
+
+typedef struct Info_player_in_match{
+
+      unsigned int x;
+      unsigned int y;
+      unsigned int num_colored_cells;
+
+}Info_player_in_match;
 
 const unsigned int map_preset_1[16][16] = {
       {0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0},
