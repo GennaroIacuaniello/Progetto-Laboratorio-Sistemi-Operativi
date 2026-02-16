@@ -19,10 +19,10 @@
 
 #define MAIN_MENU_SIZE 3
 #define MAIN_MENU_JOIN_LOBBY 1
-#define MAIN_MENU_CREATE_LOBBY 1
-#define MAIN_MENU_EXIT 1
+#define MAIN_MENU_CREATE_LOBBY 2
+#define MAIN_MENU_EXIT 3
 
-void print_menu(char **menu, int menu_size);
+void print_menu(char **menu, int menu_size, int cursor_y);
 int navigate_menu(char **menu, int menu_size, int *cursor_y);
 int read_input();
 
@@ -50,21 +50,23 @@ int main(void){
     return 0;
 }
 
-void print_menu(char **menu, int menu_size){
+void print_menu(char **menu, int menu_size, int cursor_y){
 
     clear_screen();
     for(int i = 0; i < menu_size; i++){
         set_cursor(0, i+1);
         printf(" %s\n", menu[i]);
     }
+    
+    /*Show current position*/
+    set_cursor(0, cursor_y);
+    printf(">");
 
 }
 
 int navigate_menu(char **menu, int menu_size, int *cursor_y){
 
-    print_menu(menu, menu_size);
-    set_cursor(0, *cursor_y);
-    printf(">");
+    print_menu(menu, menu_size, *cursor_y);
 
     switch (read_input())
     {
@@ -82,6 +84,7 @@ int navigate_menu(char **menu, int menu_size, int *cursor_y){
     }
 
     usleep(10000); //keep ~<50000 to avoid stuttering issues with holding arrow keys
+
     return 0;
 }
 
@@ -89,9 +92,9 @@ int read_input(){
     
     char c;
     
-    if ((c = getchar()) == '\x1B') {
-        getchar(); //skip the [
-        return getchar(); //the real arrow value
+    if ((c = getchar()) == '\x1B') { //Escape sequence
+        getchar(); //Skip the [
+        return getchar(); //The real arrow value
     }
 
     return c;
@@ -138,7 +141,7 @@ void handle_start_menu_choice(int choice){
 
             while(!login_success){
                 printf("Password: "); fflush(stdout);
-                set_echo_off();
+                set_echo_off(); //Hide the password
                 size = read(STDIN_FILENO, password, BUFFER_SIZE);
                 password[size - 1] = '\0';
                 printf("\n");
@@ -164,7 +167,7 @@ void main_menu(char *username){
     int cursor_y = 1;
     int made_choice = 0;
     
-    char *main_menu_options[START_MENU_SIZE];
+    char *main_menu_options[MAIN_MENU_SIZE];
     main_menu_options[MAIN_MENU_JOIN_LOBBY - 1] = "Unisciti a una lobby";
     main_menu_options[MAIN_MENU_CREATE_LOBBY - 1] = "Crea lobby";
     main_menu_options[MAIN_MENU_EXIT - 1] = "Esci";
