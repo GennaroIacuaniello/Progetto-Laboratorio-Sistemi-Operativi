@@ -1017,7 +1017,7 @@ Match* init_match(int socket_for_thread, User* creator, int size){
             pthread_exit(0);
       }
 
-      int i, j, x, y, z, k;
+      int j, x, y, z, k;
       for(i=0; i < size; i++){
 
             match_created->map[i] = malloc(size*sizeof(char));
