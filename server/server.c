@@ -287,6 +287,8 @@ unsigned int registration(unsigned char* username, unsigned char* password);
 unsigned long hash(unsigned char *str);
 
 void handle_session(int socket_for_thread, User* current_user);
+void lobby_creation(int socket_for_thread, User* current_user);
+void join_lobby(int socket_for_thread, User* current_user);
 
 Match* init_match(int socket_for_thread, User* creator, int size);
 
@@ -862,7 +864,7 @@ void handle_session(int socket_for_thread, User* current_user){
                         break;
                   case 2:
                         done = 1;
-                        join_lobby(socket_for_thread);
+                        join_lobby(socket_for_thread, current_user);
                         break;
                   case 3:
                         done = 1;
@@ -881,6 +883,14 @@ void handle_session(int socket_for_thread, User* current_user){
             }
 
       }
+
+}
+
+void lobby_creation(int socket_for_thread, User* current_user){
+
+}
+
+void join_lobby(int socket_for_thread, User* current_user){
 
 }
 
