@@ -327,7 +327,7 @@ ssize_t send_all(int socket_for_thread, const void* buf, size_t n);
 ssize_t recv_all(int socket_for_thread, void* buf, size_t n, int flags);
 
 ssize_t send_all_in_match(int socket_for_thread, const void* buf, size_t n, Match_list_node* match_node, User* current_user, int id_in_match);
-ssize_t recv_all_in_match(int socket_for_thread, const void* buf, size_t n, int flags, Match_list_node* match_node, User* current_user, int id_in_match);
+ssize_t recv_all_in_match(int socket_for_thread, void* buf, size_t n, int flags, Match_list_node* match_node, User* current_user, int id_in_match);
 
 
 
