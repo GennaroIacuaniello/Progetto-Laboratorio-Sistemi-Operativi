@@ -90,7 +90,7 @@ typedef enum {
     NOT_IN_PROGRESS
 } Match_status;
 
-typedef struct Match{
+typedef struct Match{         //Colors of the game with 4 players: players[0] = blue, players[1] = red, players[2] = green, players[3] = yellow
 
       uint32_t id;                          //id of the lobby
       User_in_match* players[MAX_PLAYERS_MATCH];      //array of players, up to MAX_PLAYERS_MATCH players per match
@@ -317,6 +317,7 @@ char* get_message_list_of_players_and_size(int socket_for_thread, User* current_
 void start_match(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
 void change_map_size(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
 
+void check_host_change_or_match_cancellation(Match_list_node* match_node, int previous_host_id_in_match);
 void handle_client_death_in_lobby(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
 
 Match* init_match(int socket_for_thread, User* creator, int size);
@@ -615,14 +616,14 @@ ssize_t send_all(int socket_for_thread, const void* buf, size_t n){
                         continue; 
             
                   if (errno == EPIPE) {
-                        printf("Client morto\n");
+                        perror("Client morto\n");
                         close(socket_for_thread);
                         pthread_exit(0);
                   }
 
                   perror("send"); 
                   close(socket_for_thread); 
-                  _exit(1); 
+                  pthread_exit(0); 
             }
 
             sent += (size_t)w;
@@ -633,6 +634,7 @@ ssize_t send_all(int socket_for_thread, const void* buf, size_t n){
 }
 
 ssize_t recv_all(int socket_for_thread, void* buf, size_t n, int flags){
+
       size_t received = 0;
       void* ptr = buf;
 
@@ -647,7 +649,7 @@ ssize_t recv_all(int socket_for_thread, void* buf, size_t n, int flags){
                   
                   perror("recv"); 
                   close(socket_for_thread); 
-                  _exit(1); 
+                  pthread_exit(0); 
 
             }
 
@@ -661,19 +663,72 @@ ssize_t recv_all(int socket_for_thread, void* buf, size_t n, int flags){
       }
 
       return (ssize_t)received;
+
 }
 
 
 ssize_t send_all_in_match(int socket_for_thread, const void* buf, size_t n, Match_list_node* match_node, User* current_user, int id_in_match){
 
-      //TO DOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+      size_t sent = 0;
+      const void* ptr = buf;
+
+      while(sent < n){
+
+            ssize_t w = send(socket_for_thread, ptr + sent, (size_t)(n - sent), 0);
+
+            if (w < 0) { 
+
+                  if (errno == EINTR) 
+                        continue; 
+            
+                  if (errno == EPIPE) {
+                        perror("Client morto\n");
+                        handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+
+                  }
+
+                  perror("send"); 
+                  handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+
+            }
+
+            sent += (size_t)w;
+      }
+
+      return (ssize_t)sent;
 
 
 }
 
 ssize_t recv_all_in_match(int socket_for_thread, const void* buf, size_t n, int flags, Match_list_node* match_node, User* current_user, int id_in_match){
 
-      //TO DOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+      size_t received = 0;
+      void* ptr = buf;
+
+      while(received < n){
+
+            ssize_t r = recv(socket_for_thread, ptr + received, (size_t)(n - received), flags);
+
+            if( r < 0 ){
+
+                  if(errno = EINTR)
+                        continue;
+                  
+                  perror("recv"); 
+                  handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match); 
+
+            }
+
+            if( r == 0 )       //connessione chiusa
+                  return (ssize_t)received;
+
+
+            received += (size_t)r;
+
+
+      }
+
+      return (ssize_t)received;
 
 
 }
@@ -1239,9 +1294,10 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
                                     start_match(socket_for_thread, match_node, current_user, id_in_match);    //TO DOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
                                     return;
                               case 2:
-                                    change_map_size(socket_for_thread, match_node, current_user, id_in_match);      //TO DOOOOOOOOOOOOOOOOOOOOO
-                                    return;
+                                    change_map_size(socket_for_thread, match_node, current_user, id_in_match);
+                                    break;
                               case 3:
+                                    check_host_change_or_match_cancellation(match_node, id_in_match);
                                     handle_session(socket_for_thread, current_user);
                                     return;
                               case 4:
@@ -1430,15 +1486,213 @@ void start_match(int socket_for_thread, Match_list_node* match_node, User* curre
 
 void change_map_size(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match){
 
+      char size_request[] = "\nInserire l'opzione relativa alla dimensione della mappa con cui si desidera giocare:\n1)16x16\n2)32x32\n3)48x48\n";
 
-      //TO DOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+      send_all(socket_for_thread, size_request, sizeof(size_request));
+
+      int size;
+      uint32_t option_received, option;
+      int done = 0;
+
+      while (done == 0){
+
+            ssize_t r = recv_all(socket_for_thread, &option_received, sizeof(option), 0);
+
+            if (r == sizeof(option_received)) 
+                  option = ntohl(option_received);
+
+
+            switch (option){
+                  case 1:
+                        done = 1;
+                        size = 16;
+                        break;
+                  case 2:
+                        done = 1;
+                        size = 32;
+                        break;
+                  case 3:
+                        done = 1;
+                        size = 48;
+                        break;
+
+                  default:
+                        char error_message[] = "\nOpzione non valida!\nInserire il numero relativo alla dimensione della mappa che si desidera:\n1)16x16\n2)32x32\n3)48x48\n";
+                        send_all(socket_for_thread, error_message, sizeof(error_message));
+                        break;
+            }
+
+      }
+
+      if(size != match_node->match->size){
+
+            int i;        
+
+            //Deallocating previous map
+            for(i = 0; i < match_node->match->size; i++)
+                  free(match_node->match->map[i]);
+            
+            free(match_node->match->map);
+
+            match_node->match->size = size;
+
+            //Allocating the new map
+            match_node->match->map = malloc(size*sizeof(char));
+
+            if (!(match_node->match->map)) {
+
+                  perror("malloc");
+                  handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+
+            }
+
+            int j, x, y, z, k;
+            for(i=0; i < size; i++){
+
+                  match_node->match->map[i] = malloc(size*sizeof(char));
+                  if (!(match_node->match->map)) {
+
+                        perror("malloc");
+                        handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+
+                  }
+
+            }
+
+            //Random creation of the map
+            int num_of_blocks = size/16;        //Number of 16x16 blocks of the map
+            for(i=0; i < num_of_blocks; i++){
+
+                  for(j=0; j < num_of_blocks; j++){
+                        
+                        int random_preset = rand() % 4;
+                        z = 0;
+                        k = 0;
+
+                        for(x = i*16; x < (i+1)*16; x++, z++){
+
+                              for(y = j*16; y < (j+1)*16; y++, k++){
+
+                                    match_node->match->map[x][y] = array_of_map_presets[random_preset][z][k];
+
+                              }
+
+
+                        }
+
+
+                  }
+
+
+            }
+
+      }
+      
+
+}
+
+void check_host_change_or_match_cancellation(Match_list_node* match_node, int previous_host_id_in_match){
+
+      int i;
+      int found_another_host = 0;
+
+      pthread_mutex_lock(&match_node->match->match_mutex);
+
+      while(match_node->match->match_free == 0)
+            pthread_cond_wait(&match_node->match->match_cond_var, &match_node->match->match_mutex);
+
+      match_node->match->match_free = 0;
+
+      if(previous_host_id_in_match == match_node->match->host){
+
+            for(i=0; i < MAX_PLAYERS_MATCH; i++)
+                  if(match_node->match->players[i] != NULL){
+
+                        found_another_host = 1;
+                        match_node->match->host = i;
+
+                  }
+
+      }
+
+      match_node->match->match_free = 1;
+      pthread_cond_signal(&match_node->match->match_cond_var);
+      pthread_mutex_unlock(&match_node->match->match_mutex);
+
+      if(found_another_host == 0){        //It means that there are no more players in the lobby, so the lobby must be deleted
+
+            Match_list_node* tmp = match_list;
+
+            if(tmp == match_node){
+                  match_list = match_list->next;
+            }else{
+                  while(tmp != NULL){
+                        if(tmp->next == match_node){
+                              tmp->next = match_node->next;
+                        }
+                  }
+            }
+
+            free_match(match_node->match);
+            match_node = NULL;
+      }
+
 
 }
 
 void handle_client_death_in_lobby(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match){
 
+      int i;
+      int found_another_host = 0;
 
-      //TO DOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+      pthread_mutex_lock(&match_node->match->match_mutex);
+
+      while(match_node->match->match_free == 0)
+            pthread_cond_wait(&match_node->match->match_cond_var, &match_node->match->match_mutex);
+
+      match_node->match->match_free = 0;
+
+      if(id_in_match < MAX_PLAYERS_MATCH){
+            free(match_node->match->players[id_in_match]);
+            match_node->match->players[id_in_match] = NULL;
+      }
+
+      if(id_in_match == match_node->match->host){
+
+            for(i=0; i < MAX_PLAYERS_MATCH; i++)
+                  if(match_node->match->players[i] != NULL){
+
+                        found_another_host = 1;
+                        match_node->match->host = i;
+
+                  }
+
+      }
+
+      match_node->match->match_free = 1;
+      pthread_cond_signal(&match_node->match->match_cond_var);
+      pthread_mutex_unlock(&match_node->match->match_mutex);
+
+      if(found_another_host == 0){        //It means that there are no more players in the lobby, so the lobby must be deleted
+
+            Match_list_node* tmp = match_list;
+
+            if(tmp == match_node){
+                  match_list = match_list->next;
+            }else{
+                  while(tmp != NULL){
+                        if(tmp->next == match_node){
+                              tmp->next = match_node->next;
+                        }
+                  }
+            }
+
+            free_match(match_node->match);
+            match_node = NULL;
+      }
+
+      close(socket_for_thread);
+      pthread_exit(0);
 
 }
 
@@ -1556,8 +1810,12 @@ Match* init_match(int socket_for_thread, User* creator, int size){
 
 void free_match(Match* match){
 
-      //Deallocating the map
       int i;
+      //Deallocating players
+      for(i = 0; i < MAX_PLAYERS_MATCH; i++)
+            free(match->players[i]);
+
+      //Deallocating the map
       for(i = 0; i < match->size; i++)
             free(match->map[i]);
       
