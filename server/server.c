@@ -18,6 +18,8 @@
 #define BACKLOG 16
 
 #define MAX_PLAYERS_MATCH 4
+#define SECONDS_PER_SIZE 120        //Match lenght starts from 2 minutes (120 seconds) and scales with the map size (16x16 120 sec, 32x32 240 sec, 48x48 360 sec)
+#define TIMER_GLOBAL_MAP 30         //Interval of seconds every time the server sends the global map
 
 /*
 lista giocatori: 
@@ -117,8 +119,25 @@ typedef struct Match_list_node{
 //Global list of matches
 Match_list_node* match_list = NULL;
 
+typedef struct Message_with_local_information{
 
+      uint32_t players_position[MAX_PLAYERS_MATCH][2];        //Every row has 2 cells, if a player is in the local map, its cells are not size of the map + 1
 
+      char local_map[5][5];
+
+      char message[40];
+
+}Message_with_local_information;
+
+typedef struct Global_Info_Header{
+      
+      uint32_t players_position[MAX_PLAYERS_MATCH][2];      //Every row has 2 cells, if a player is in the global map, its cells are not size of the map + 1
+
+      uint32_t size;                                        //Global map size
+
+} Global_Info_Header;
+
+const unsigned char colors[MAX_PLAYERS_MATCH] = {'b', 'r', 'g', 'y'};      //Global variable used for player colors
 
 //Variables used to give ids to matches
 pthread_mutex_t next_match_id_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -323,6 +342,10 @@ void handle_client_death_in_lobby(int socket_for_thread, Match_list_node* match_
 
 
 void handle_being_in_match(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
+Message_with_local_information* get_message_with_local_information(Match_list_node* match_node, int id_in_match);
+void send_global_map_to_client(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
+void handle_move_in_match(Match_list_node* match_node, int id_in_match, char option);
+void handle_match_ending(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
 
 Match* init_match(int socket_for_thread, User* creator, int size);
 void free_match(Match* match);
@@ -1953,11 +1976,232 @@ void handle_client_death_in_lobby(int socket_for_thread, Match_list_node* match_
 
 void handle_being_in_match(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match){
 
-      //Code to test that match starts for every player
-      while(1){
-            perror("ciao");
-            sleep(30);
+      Message_with_local_information* message_with_local_information = get_message_with_local_information(match_node, id_in_match);
+
+      send_all_in_match(socket_for_thread, message_with_local_information, sizeof(Message_with_local_information), match_node, current_user, id_in_match);
+
+      time_t last_global_map = time(NULL);
+      time_t match_start = last_global_map;
+
+      int size = match_node->match->size;
+      int timer = (size % 16) * SECONDS_PER_SIZE;
+
+      for (;;) {
+
+            char option;
+
+            ssize_t r = recv_all_in_match(socket_for_thread, &option, sizeof(option), MSG_DONTWAIT, match_node, current_user, id_in_match);
+
+            if (r > 0) {
+
+                  handle_move_in_match(match_node, id_in_match, option);
+                  free(message_with_local_information);
+                  message_with_local_information = get_message_with_local_information(match_node, id_in_match);
+                  send_all_in_match(socket_for_thread, message_with_local_information, sizeof(Message_with_local_information), match_node, current_user, id_in_match);
+
+
+            } else if (r == 0) {
+                  // client closed
+                  handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+                  break;
+
+            } else {
+                  // r < 0
+                  if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                        perror("recv");
+                        break;
+                  }
+                  //no data, all normal
+            }
+
+
+            //Every TIMER_GLOBAL_MAP sends the global map
+            time_t now = time(NULL);
+            if (now - last_global_map >= TIMER_GLOBAL_MAP) {
+
+                  send_global_map_to_client(socket_for_thread, match_node, current_user, id_in_match);
+                  last_global_map = now;
+
+            }
+
+            //When match timer ends, stops the match
+            now = time(NULL);
+            if (now - match_start >= timer) {
+
+                  handle_match_ending(socket_for_thread, match_node, current_user, id_in_match);
+                  return;
+
+            }
+
+            usleep(10000); // 10ms
       }
+
+}
+
+Message_with_local_information* get_message_with_local_information(Match_list_node* match_node, int id_in_match){
+
+      const char message[] = "\nInserire prossima mossa (w, a, s, d): ";
+
+      Message_with_local_information* message_with_local_information = malloc(sizeof(Message_with_local_information));
+
+      strcpy(message_with_local_information->message, message);
+
+      int size = match_node->match->size;
+
+      pthread_mutex_lock(&match_node->match->match_mutex);
+
+      while(match_node->match->match_free == 0)
+            pthread_cond_wait(&match_node->match->match_cond_var, &match_node->match->match_mutex);
+
+      match_node->match->match_free = 0;
+
+      int x = match_node->match->players[id_in_match]->x;
+      int y = match_node->match->players[id_in_match]->y;
+
+      int i, j, z, k;
+      z = 0;
+      for(i= x - 2; i <= x + 2; i++, z ++){
+
+            k = 0;
+            for(j = y - 2; j <= y + 2; j++, k++ ){
+
+                  if( (i >= 0 && i < size)  && (j >= 0 && j < size) ){            //If i and j are "good" indexes
+
+                        message_with_local_information->local_map[z][k] = match_node->match->map[i][j];
+
+                  }else{
+
+                        message_with_local_information->local_map[z][k] = 'e';
+
+                  }
+
+
+            }
+      }
+
+      for(int i = 0; i < MAX_PLAYERS_MATCH; i++) {
+
+            if(match_node->match->players[i] != NULL) {
+
+                  z = match_node->match->players[i]->x;
+                  k = match_node->match->players[i]->y;
+
+                  if( ( z >= (x -2) && z <= (x + 2) ) && ( k >= (y -2) && k <= (y + 2) ) ){
+                        
+                        message_with_local_information->players_position[i][0] = htonl((uint32_t)z);
+                        message_with_local_information->players_position[i][1] = htonl((uint32_t)k);
+
+                  }else {
+                  
+                        message_with_local_information->players_position[i][0] = htonl((uint32_t)(size + 1));
+                        message_with_local_information->players_position[i][1] = htonl((uint32_t)(size + 1));
+
+                  }
+
+            } else {
+                  
+                  message_with_local_information->players_position[i][0] = htonl((uint32_t)(size + 1));
+                  message_with_local_information->players_position[i][1] = htonl((uint32_t)(size + 1));
+
+            }
+      }
+
+      match_node->match->match_free = 1;
+      pthread_cond_signal(&match_node->match->match_cond_var);
+      pthread_mutex_unlock(&match_node->match->match_mutex);
+
+      return message_with_local_information;
+
+
+}
+
+void send_global_map_to_client(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match) {
+      
+      int size = match_node->match->size;
+
+      //Calculate total size of the message to send
+      size_t header_size = sizeof(Global_Info_Header);
+      size_t map_size = size * size * sizeof(char); 
+      size_t total_message_size = header_size + map_size;
+
+      //Allocates memory for the total message
+      char* message_buffer = malloc(total_message_size);
+      if (!message_buffer) {
+            perror("malloc");
+            handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+      }
+
+      //Build the info in the header
+      Global_Info_Header header;
+      header.size = htonl((uint32_t)size);
+
+      pthread_mutex_lock(&match_node->match->match_mutex);
+
+      while(match_node->match->match_free == 0)
+            pthread_cond_wait(&match_node->match->match_cond_var, &match_node->match->match_mutex);
+
+      match_node->match->match_free = 0;
+      
+
+      for(int i = 0; i < MAX_PLAYERS_MATCH; i++) {
+
+            if(match_node->match->players[i] != NULL) {
+
+                  header.players_position[i][0] = htonl((uint32_t)match_node->match->players[i]->x);
+                  header.players_position[i][1] = htonl((uint32_t)match_node->match->players[i]->y);
+
+            } else {
+                  
+                  header.players_position[i][0] = htonl((uint32_t)(size + 1));
+                  header.players_position[i][1] = htonl((uint32_t)(size + 1));
+
+            }
+      }
+
+      //Copies the header in the message_buffer
+      memcpy(message_buffer, &header, header_size);
+
+      //Copies the map in the message_buffer, not sending the walls
+      int offset = header_size;
+      for (int i = 0; i < size; i++) {
+            for (int j = 0; j < size; j++) {
+                  
+                  // If there is a wall ('w'), sends empty ('e')
+                  if (match_node->match->map[i][j] == 'w') {
+                        message_buffer[offset] = 'e';
+                  } else {
+                        //Otherwise sends whatever there is
+                        message_buffer[offset] = match_node->match->map[i][j];
+                  }
+                  
+                  offset++;
+            }
+      }
+
+
+      match_node->match->match_free = 1;
+      pthread_cond_signal(&match_node->match->match_cond_var);
+      pthread_mutex_unlock(&match_node->match->match_mutex);
+
+      
+      send_all_in_match(socket_for_thread, message_buffer, total_message_size, match_node, current_user, id_in_match);
+
+      
+      free(message_buffer);
+
+}
+
+void handle_move_in_match(Match_list_node* match_node, int id_in_match, char option){
+
+
+
+
+}
+
+void handle_match_ending(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match){
+
+
+
 
 }
 
