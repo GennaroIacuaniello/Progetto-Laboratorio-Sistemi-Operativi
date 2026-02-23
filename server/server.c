@@ -325,6 +325,7 @@ void free_match(Match* match);
 
 ssize_t send_all(int socket_for_thread, const void* buf, size_t n);
 ssize_t recv_all(int socket_for_thread, void* buf, size_t n, int flags);
+ssize_t recv_string(int socket_for_thread, char* buf, size_t max_len, int flags);
 
 ssize_t send_all_in_match(int socket_for_thread, const void* buf, size_t n, Match_list_node* match_node, User* current_user, int id_in_match);
 ssize_t recv_all_in_match(int socket_for_thread, void* buf, size_t n, int flags, Match_list_node* match_node, User* current_user, int id_in_match);
@@ -653,7 +654,7 @@ ssize_t recv_all(int socket_for_thread, void* buf, size_t n, int flags){
 
             }
 
-            if( r == 0 )       //connessione chiusa
+            if( r == 0 )       //connection closed
                   return (ssize_t)received;
 
 
@@ -664,6 +665,49 @@ ssize_t recv_all(int socket_for_thread, void* buf, size_t n, int flags){
 
       return (ssize_t)received;
 
+}
+
+ssize_t recv_string(int socket_for_thread, char* buf, size_t max_len, int flags) {
+
+      size_t received = 0;
+      char c;
+
+      //Read until the max is reashed, leaving 1 place for string terminator '\0'
+      while (received < max_len - 1) {
+            
+            ssize_t r = recv(socket_for_thread, &c, (size_t)1, flags); // Reads 1 byte
+
+            if (r < 0) {
+
+                  if (errno == EINTR) 
+                        continue; 
+                  
+                  perror("recv");
+                  close(socket_for_thread);
+                  pthread_exit(0);
+            }
+
+            if( r == 0 )       //connection closed
+                  return (ssize_t)received;
+
+            // If the char is \n or string terminator \0 stop
+            if (c == '\n' || c == '\0') {
+            
+                  // Check if arrived \r\n instead of only \n
+                  if (received > 0 && buf[received - 1] == '\r') {
+                        received--;       //Eliminate \r
+                  }
+                  
+                  break;
+            }
+
+            buf[received] = c;
+            received++;
+      }
+
+      buf[received] = '\0';
+
+      return (ssize_t)received;
 }
 
 
@@ -719,7 +763,7 @@ ssize_t recv_all_in_match(int socket_for_thread, void* buf, size_t n, int flags,
 
             }
 
-            if( r == 0 )       //connessione chiusa
+            if( r == 0 )       //Connection closed
                   return (ssize_t)received;
 
 
@@ -787,12 +831,12 @@ User* handle_login(int socket_for_thread){
       char username[64], password[64];
 
       send_all(socket_for_thread, username_request, sizeof(username_request));
-
-      recv_all(socket_for_thread, username, sizeof(username), 0);
+      
+      recv_string(socket_for_thread, username, sizeof(username), 0);
 
       send_all(socket_for_thread, password_request, sizeof(password_request));
 
-      recv_all(socket_for_thread, password, sizeof(password), 0);
+      recv_string(socket_for_thread, password, sizeof(password), 0);
 
       unsigned int res = login(username, password);
 
@@ -871,11 +915,11 @@ User* handle_registration(int socket_for_thread){
 
       send_all(socket_for_thread, username_request, sizeof(username_request));
 
-      recv_all(socket_for_thread, username, sizeof(username), 0);
+      recv_string(socket_for_thread, username, sizeof(username), 0);
 
       send_all(socket_for_thread, password_request, sizeof(password_request));
 
-      recv_all(socket_for_thread, password, sizeof(password), 0);
+      recv_string(socket_for_thread, password, sizeof(password), 0);
 
       unsigned int res = registration(username, password);
 
