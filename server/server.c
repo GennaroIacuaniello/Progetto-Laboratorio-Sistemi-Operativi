@@ -317,8 +317,12 @@ char* get_message_list_of_players_and_size(int socket_for_thread, User* current_
 void start_match(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
 void change_map_size(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
 
+void handle_leaving_lobby(Match_list_node* match_node, int id_in_match);
 void check_host_change_or_match_cancellation(Match_list_node* match_node, int previous_host_id_in_match);
 void handle_client_death_in_lobby(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
+
+
+void handle_being_in_match(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
 
 Match* init_match(int socket_for_thread, User* creator, int size);
 void free_match(Match* match);
@@ -780,7 +784,7 @@ ssize_t recv_all_in_match(int socket_for_thread, void* buf, size_t n, int flags,
 
 
 User* handle_starting_interaction(int socket_for_thread){
-
+      
       char start_message[] = "\n        DUNGEONS & COLORS        \n\nBenvenuti!\nInserire il numero relativo all'opzione che si desidera:\n1)Login\n2)Registrazione\n3)Esci\n";
 
       send_all(socket_for_thread, start_message, sizeof(start_message));
@@ -997,7 +1001,7 @@ User* handle_registration(int socket_for_thread){
 
 void handle_session(int socket_for_thread, User* current_user){
 
-      char welcome_message_and_menu[] = "\n        DUNGEONS & COLORS        \n\nBenvenuti nel gioco!\nInserire il numero relativo all'opzione che si desidera:\n\1)Crea lobby\n2)Entra in una lobby\n3)Esci\n";
+      char welcome_message_and_menu[] = "\n        DUNGEONS & COLORS        \n\nBenvenuti nel gioco!\nInserire il numero relativo all'opzione che si desidera:\n1)Crea lobby\n2)Entra in una lobby\n3)Esci\n";
 
       send_all(socket_for_thread, welcome_message_and_menu, sizeof(welcome_message_and_menu));
 
@@ -1032,7 +1036,7 @@ void handle_session(int socket_for_thread, User* current_user){
                         pthread_exit(0);
 
                   default:
-                        char error_message[] = "\nOpzione non valida!\nInserire il numero relativo all'opzione che si desidera:\n\1)Crea lobby\n2)Entra in una lobby\n3)Esci\n";
+                        char error_message[] = "\nOpzione non valida!\nInserire il numero relativo all'opzione che si desidera:\n1)Crea lobby\n2)Entra in una lobby\n3)Esci\n";
                         send_all(socket_for_thread, error_message, sizeof(error_message));
                         break;
             }
@@ -1082,8 +1086,16 @@ void lobby_creation(int socket_for_thread, User* current_user){
       }
 
       Match* new_match = init_match(socket_for_thread, current_user, size);
-
+      
       Match_list_node* new_node = malloc(sizeof(Match_list_node));
+      if (!new_node) {
+
+            perror("malloc");
+            close(socket_for_thread);
+
+            pthread_exit(0);
+      }
+
       if(match_list == NULL){
             new_node->match = new_match;
             new_node->next = NULL;
@@ -1104,6 +1116,12 @@ void join_lobby(int socket_for_thread, User* current_user){
 
       send_all(socket_for_thread, message_with_matches_info, strlen(message_with_matches_info) + 1);
 
+      if(strcmp(message_with_matches_info, "\nNon sono disponili lobby in cui entrare!\n") == 0){
+            free(message_with_matches_info);
+            message_with_matches_info = NULL;
+            handle_session(socket_for_thread, current_user);
+      }
+            
       uint32_t option_received, option;
       int done = 0;
 
@@ -1121,20 +1139,31 @@ void join_lobby(int socket_for_thread, User* current_user){
             while(tmp != NULL){
 
                   if( option == tmp->match->id  &&  tmp->match->status == NOT_IN_PROGRESS ){
-                        done = 1;
+
                         free(message_with_matches_info);
                         message_with_matches_info = NULL;
                         int res = join_spcific_lobby(socket_for_thread, current_user, tmp);
                         
-                        if(res == 0)
+                        if(res == 0){
+                              done = 1;
                               return;
+                        }else
+                              break;
                   }
+
+                  tmp = tmp->next;
 
             }
 
             free(message_with_matches_info);
             message_with_matches_info = get_message_with_matches_info(1);     //Id specified not available, call with error_flag set
             send_all(socket_for_thread, message_with_matches_info, strlen(message_with_matches_info) + 1);
+
+            if(strcmp(message_with_matches_info, "\nNon sono disponili lobby in cui entrare!\n") == 0){
+                  free(message_with_matches_info);
+                  message_with_matches_info = NULL;
+                  handle_session(socket_for_thread, current_user);
+            }
 
       }
 
@@ -1159,6 +1188,8 @@ char* get_message_with_matches_info(int error_flag){
       else
             strcpy(matches_info, "Id lobby specificato non disponibile!\nInserire l'id della lobby in cui si desidera entrare:\nLobby disponibili (Id\tDimensione mappa di gioco\tGiocatori connessi):\n");
 
+
+      int lobby_found = 0;          //Checks if at least a lobby is available
 
       Match_list_node* tmp = match_list;
 
@@ -1186,6 +1217,8 @@ char* get_message_with_matches_info(int error_flag){
                   
                   if(full == 0){                            //It's not possible to enter a lobby full, so that lobby is not available
 
+                        lobby_found = 1;
+
                         char string_number[10] = {0};
 
                         sprintf(string_number, "%u", tmp->match->id);
@@ -1194,6 +1227,8 @@ char* get_message_with_matches_info(int error_flag){
 
                         strcat(matches_info, "\t");
 
+                        sprintf(string_number, "%d", tmp->match->size);
+                        strcat(string_number, "x");
                         sprintf(string_number, "%d", tmp->match->size);
 
                         strcat(matches_info, string_number);
@@ -1222,8 +1257,18 @@ char* get_message_with_matches_info(int error_flag){
             pthread_cond_signal(&tmp->match->match_cond_var);
             pthread_mutex_unlock(&tmp->match->match_mutex);
             
+            tmp = tmp->next;
 
       }
+
+      if(lobby_found == 0){         //If no available lobbies were found, send a message to say that
+            
+            strcpy(matches_info, "\nNon sono disponili lobby in cui entrare!\n");
+
+      }
+
+      perror("ciao");
+      return matches_info;
 
 
 }
@@ -1273,8 +1318,8 @@ unsigned int join_spcific_lobby(int socket_for_thread, User* current_user, Match
 
 void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match){
 
-      char message_host[1024] = "\n        DUNGEONS & COLORS        \n\nSei nella tua lobby!\nInserire il numero relativo all'opzione che si desidera:\n\1)Inizia partita\n2)Cambia dimensione mappa\n3)Esci dalla lobby\n4)Esci dal gioco\n";
-      char message_guest[1024] = "\n        DUNGEONS & COLORS        \n\nSei in una lobby!\nAttendere l'inizio della partita oppure inserire il numero relativo all'opzione che si desidera:\n\1)Esci dalla lobby\n2)Esci dal gioco\n";
+      char message_host[1024] = "\n        DUNGEONS & COLORS        \n\nSei nella tua lobby!\nInserire il numero relativo all'opzione che si desidera:\n1)Inizia partita\n2)Cambia dimensione mappa\n3)Esci dalla lobby\n4)Esci dal gioco\n";
+      char message_guest[1024] = "\n        DUNGEONS & COLORS        \n\nSei in una lobby!\nAttendere l'inizio della partita oppure inserire il numero relativo all'opzione che si desidera:\n1)Esci dalla lobby\n2)Esci dal gioco\n";
 
       char* list_of_players_and_size = get_message_list_of_players_and_size(socket_for_thread, current_user, match_node, id_in_match);
 
@@ -1339,9 +1384,10 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
                                     return;
                               case 2:
                                     change_map_size(socket_for_thread, match_node, current_user, id_in_match);
+                                    send_all_in_match(socket_for_thread, message_host, strlen(message_host) + 1, match_node, current_user, id_in_match);
                                     break;
                               case 3:
-                                    check_host_change_or_match_cancellation(match_node, id_in_match);
+                                    handle_leaving_lobby(match_node, id_in_match);
                                     handle_session(socket_for_thread, current_user);
                                     return;
                               case 4:
@@ -1349,7 +1395,7 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
                                     return;
 
                               default:
-                                    char error_message[] = "\nOpzione non valida!\nInserire il numero relativo alla dimensione della mappa che si desidera:\n\1)Inizia partita\n2)Cambia dimensione mappa\n3)Esci dalla lobby\n4)Esci dal gioco\n";
+                                    char error_message[] = "\nOpzione non valida!\nInserire il numero relativo alla dimensione della mappa che si desidera:\n1)Inizia partita\n2)Cambia dimensione mappa\n3)Esci dalla lobby\n4)Esci dal gioco\n";
                                     
                                     if(list_of_players_and_size != NULL)
                                           free(list_of_players_and_size);
@@ -1370,6 +1416,7 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
 
                         switch (option){
                               case 1:
+                                    handle_leaving_lobby(match_node, id_in_match);
                                     handle_session(socket_for_thread, current_user);
                                     return;
                               case 2:
@@ -1377,7 +1424,7 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
                                     return;
 
                               default:
-                                    char error_message[] = "\nOpzione non valida!\nInserire il numero relativo alla dimensione della mappa che si desidera:\n\1)Esci dalla lobby\n2)Esci dal gioco\n";
+                                    char error_message[] = "\nOpzione non valida!\nInserire il numero relativo alla dimensione della mappa che si desidera:\n1)Esci dalla lobby\n2)Esci dal gioco\n";
 
                                     if(list_of_players_and_size != NULL)
                                           free(list_of_players_and_size);
@@ -1433,7 +1480,7 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
                               pthread_cond_signal(&match_node->match->match_cond_var);
                               pthread_mutex_unlock(&match_node->match->match_mutex);
 
-                              strcpy(message_host, "\n        DUNGEONS & COLORS        \n\nSei nella tua lobby!\nInserire il numero relativo all'opzione che si desidera:\n\1)Inizia partita\n2)Esci dalla lobby\n3)Esci dal gioco\n");
+                              strcpy(message_host, "\n        DUNGEONS & COLORS        \n\nSei nella tua lobby!\nInserire il numero relativo all'opzione che si desidera:\n1)Inizia partita\n2)Cambia dimensione mappa\n3)Esci dalla lobby\n4)Esci dal gioco\n");
                             
                               strcat(message_host, list_of_players_and_size);
                               send_all_in_match(socket_for_thread, message_host, strlen(message_host) + 1, match_node, current_user, id_in_match);
@@ -1443,7 +1490,7 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
                               pthread_cond_signal(&match_node->match->match_cond_var);
                               pthread_mutex_unlock(&match_node->match->match_mutex);
 
-                              strcpy(message_guest, "\n        DUNGEONS & COLORS        \n\nSei in una lobby!\nAttendere l'inizio della partita oppure inserire il numero relativo all'opzione che si desidera:\n\1)Esci dalla lobby\n2)Esci dal gioco\n");
+                              strcpy(message_guest, "\n        DUNGEONS & COLORS        \n\nSei in una lobby!\nAttendere l'inizio della partita oppure inserire il numero relativo all'opzione che si desidera:\n1)Esci dalla lobby\n2)Esci dal gioco\n");
 
                               strcat(message_guest, list_of_players_and_size);
                               send_all_in_match(socket_for_thread, message_guest, strlen(message_guest) + 1, match_node, current_user, id_in_match);
@@ -1507,6 +1554,7 @@ char* get_message_list_of_players_and_size(int socket_for_thread, User* current_
                   strcat(string_dimension, string_size);
                   strcat(string_dimension, "x");
                   strcat(string_dimension, string_size);
+                  strcat(string_dimension, "\n");
 
                   strcat(list_of_players_and_size, string_dimension);
                   
@@ -1523,8 +1571,106 @@ char* get_message_list_of_players_and_size(int socket_for_thread, User* current_
 
 void start_match(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match){
 
+      pthread_mutex_lock(&match_node->match->match_mutex);
 
-      //TO DOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+      while(match_node->match->match_free == 0)
+            pthread_cond_wait(&match_node->match->match_cond_var, &match_node->match->match_mutex);
+
+      match_node->match->match_free = 0;
+
+      int i;
+      //Random creation of the map
+      int j, x, y, z, k;
+      int num_of_blocks = match_node->match->size/16;        //Number of 16x16 blocks of the map
+      for(i=0; i < num_of_blocks; i++){
+
+            for(j=0; j < num_of_blocks; j++){
+                  
+                  int random_preset = rand() % 4;
+                  z = 0;
+                  
+
+                  for(x = i*16; x < (i+1)*16; x++, z++){
+
+                        k = 0;
+
+                        for(y = j*16; y < (j+1)*16; y++, k++){
+
+                              match_node->match->map[x][y] = array_of_map_presets[random_preset][z][k];
+
+                        }
+
+
+                  }
+
+
+            }
+
+
+      }
+
+      int size = match_node->match->size;
+
+      //Inizialize player position to impossible values (to avoid garbage values)
+      for(i=0; i < MAX_PLAYERS_MATCH; i++){
+            if(match_node->match->players[i] != NULL){
+                  match_node->match->players[i]->x = size + 1;
+                  match_node->match->players[i]->y = size + 1;
+            }
+      }
+
+      int pos_ok = 0;
+      //Random positioning the players
+      for(i=0; i < MAX_PLAYERS_MATCH; i++){
+
+            pos_ok=0;
+            if(match_node->match->players[i] != NULL){
+
+                  while(pos_ok == 0){
+
+                        pos_ok = 1;       //tries to put pos_ok
+                        x = rand() % size;
+                        y = rand() % size;
+
+                        match_node->match->players[i]->x = x;
+                        match_node->match->players[i]->y = y;
+
+                        if(match_node->match->map[x][y] == 'e'){
+                              for(j=0; j < MAX_PLAYERS_MATCH; j++){
+                                    if(match_node->match->players[j] != NULL)
+                                          if(match_node->match->players[j]->x == x && match_node->match->players[j]->y == y){
+                                                pos_ok = 0;
+                                                break;
+                                          }
+
+                              }
+                        }else{
+                              pos_ok = 0;
+                        }
+
+
+                  }
+
+
+            }
+
+
+      }
+
+      match_node->match->status = IN_PROGRESS;
+
+      for(i=0; i < MAX_PLAYERS_MATCH; i++){
+            if(i != id_in_match && match_node->match->players[i] != NULL)
+                  pthread_kill(match_node->match->players[i]->tid, SIGUSR1);
+      }
+
+      match_node->match->match_free = 1;
+      pthread_cond_signal(&match_node->match->match_cond_var);
+      pthread_mutex_unlock(&match_node->match->match_mutex);
+
+      handle_being_in_match(socket_for_thread, match_node, current_user, id_in_match);          //TO DOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOo
+
+
 
 }
 
@@ -1581,61 +1727,60 @@ void change_map_size(int socket_for_thread, Match_list_node* match_node, User* c
             match_node->match->size = size;
 
             //Allocating the new map
-            match_node->match->map = malloc(size*sizeof(char));
+            match_node->match->map = malloc(size*sizeof(char*));
 
             if (!(match_node->match->map)) {
 
                   perror("malloc");
-                  handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+                  close(socket_for_thread);
 
+                  pthread_exit(0);
             }
 
             int j, x, y, z, k;
             for(i=0; i < size; i++){
 
                   match_node->match->map[i] = malloc(size*sizeof(char));
-                  if (!(match_node->match->map)) {
+                  if (!(match_node->match->map[i])) {
 
                         perror("malloc");
-                        handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+                        close(socket_for_thread);
 
+                        pthread_exit(0);
                   }
 
             }
-
-            //Random creation of the map
-            int num_of_blocks = size/16;        //Number of 16x16 blocks of the map
-            for(i=0; i < num_of_blocks; i++){
-
-                  for(j=0; j < num_of_blocks; j++){
-                        
-                        int random_preset = rand() % 4;
-                        z = 0;
-                        k = 0;
-
-                        for(x = i*16; x < (i+1)*16; x++, z++){
-
-                              for(y = j*16; y < (j+1)*16; y++, k++){
-
-                                    match_node->match->map[x][y] = array_of_map_presets[random_preset][z][k];
-
-                              }
-
-
-                        }
-
-
-                  }
-
-
-            }
-
+            
       }
       
 
 }
 
-void check_host_change_or_match_cancellation(Match_list_node* match_node, int previous_host_id_in_match){
+void handle_leaving_lobby(Match_list_node* match_node, int id_in_match){
+
+      pthread_mutex_lock(&match_node->match->match_mutex);
+
+      while(match_node->match->match_free == 0)
+            pthread_cond_wait(&match_node->match->match_cond_var, &match_node->match->match_mutex);
+
+      match_node->match->match_free = 0;
+
+      if(id_in_match < MAX_PLAYERS_MATCH){
+            free(match_node->match->players[id_in_match]);
+            match_node->match->players[id_in_match] = NULL;
+      }
+            
+
+
+      match_node->match->match_free = 1;
+      pthread_cond_signal(&match_node->match->match_cond_var);
+      pthread_mutex_unlock(&match_node->match->match_mutex);
+
+      check_host_change_or_match_cancellation(match_node, id_in_match);
+
+}
+
+void check_host_change_or_match_cancellation(Match_list_node* match_node, int id_in_match){
 
       int i;
       int found_another_host = 0;
@@ -1647,7 +1792,7 @@ void check_host_change_or_match_cancellation(Match_list_node* match_node, int pr
 
       match_node->match->match_free = 0;
 
-      if(previous_host_id_in_match == match_node->match->host){
+      if(id_in_match == match_node->match->host){
 
             for(i=0; i < MAX_PLAYERS_MATCH; i++)
                   if(match_node->match->players[i] != NULL){
@@ -1657,29 +1802,40 @@ void check_host_change_or_match_cancellation(Match_list_node* match_node, int pr
 
                   }
 
-      }
 
-      match_node->match->match_free = 1;
-      pthread_cond_signal(&match_node->match->match_cond_var);
-      pthread_mutex_unlock(&match_node->match->match_mutex);
+            match_node->match->match_free = 1;
+            pthread_cond_signal(&match_node->match->match_cond_var);
+            pthread_mutex_unlock(&match_node->match->match_mutex);
 
-      if(found_another_host == 0){        //It means that there are no more players in the lobby, so the lobby must be deleted
+            if(found_another_host == 0){        //It means that there are no more players in the lobby, so the lobby must be deleted
 
-            Match_list_node* tmp = match_list;
+                  Match_list_node* tmp = match_list;
 
-            if(tmp == match_node){
-                  match_list = match_list->next;
-            }else{
-                  while(tmp != NULL){
-                        if(tmp->next == match_node){
-                              tmp->next = match_node->next;
+                  if(tmp == match_node){
+                        match_list = match_list->next;
+                  }else{
+                        while(tmp != NULL){
+                              if(tmp->next == match_node){
+                                    tmp->next = match_node->next;
+                                    break;
+                              }
+                              tmp = tmp->next;
                         }
                   }
+
+                  free_match(match_node->match);
+                  match_node = NULL;
             }
 
-            free_match(match_node->match);
-            match_node = NULL;
+      }else{
+
+            match_node->match->match_free = 1;
+            pthread_cond_signal(&match_node->match->match_cond_var);
+            pthread_mutex_unlock(&match_node->match->match_mutex);
+
       }
+
+      
 
 
 }
@@ -1727,7 +1883,9 @@ void handle_client_death_in_lobby(int socket_for_thread, Match_list_node* match_
                   while(tmp != NULL){
                         if(tmp->next == match_node){
                               tmp->next = match_node->next;
+                              break;
                         }
+                        tmp = tmp->next;
                   }
             }
 
@@ -1741,30 +1899,75 @@ void handle_client_death_in_lobby(int socket_for_thread, Match_list_node* match_
 }
 
 
+void handle_being_in_match(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match){
+
+      
+
+
+}
+
 void siguser1_handler(int signal){
 
-      //TO DOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-      //chiamata alla funzione che gestisce lo stare nella partita usando pthread_getspecific per ottenre il valore del socket e poi cercando gli altri dati grazie a pthread_self()
+      int i;
+
       int* socket_for_thread = pthread_getspecific(key_for_socket);
+      User* current_user = NULL;
+      int id_in_match;
+
+      Match_list_node* tmp = match_list;
+
+      int player_found = 0;
+      while(tmp != NULL && player_found == 0){
+
+            for(i=0; i < MAX_PLAYERS_MATCH; i++)
+                  if(tmp->match->players[i] != NULL)
+                        if(tmp->match->players[i]->tid == pthread_self()){
+
+                              current_user = malloc(sizeof(User));
+                              strcpy(current_user->username, tmp->match->players[i]->username);
+
+                              id_in_match = i;
+
+                              player_found = 1;
+                              break;
+
+                        }
+
+            if(player_found == 1)
+                  break;
+            else
+                  tmp = tmp->next;
+      }
+
+      if(player_found == 1)
+            handle_being_in_match(socket_for_thread, tmp, current_user, id_in_match);
 
 }
 
 Match* init_match(int socket_for_thread, User* creator, int size){
-
+      
       Match* match_created = malloc(sizeof(Match));
+      
+      if (!match_created) {
 
+            perror("malloc");
+            close(socket_for_thread);
+
+            pthread_exit(0);
+      }
+      
       //Assigning id
       pthread_mutex_lock(&next_match_id_mutex);
 
       while(next_match_id_free == 0)
             pthread_cond_wait(&next_match_id_cond_var, &next_match_id_mutex);
 
-      users_file_free = 0;
+      next_match_id_free = 0;
 
       match_created->id = next_match_id;
       next_match_id++;
 
-      users_file_free = 1;
+      next_match_id_free = 1;
       pthread_cond_signal(&next_match_id_cond_var);
       pthread_mutex_unlock(&next_match_id_mutex);
 
@@ -1790,7 +1993,7 @@ Match* init_match(int socket_for_thread, User* creator, int size){
       match_created->size = size;
 
       //Allocating the map
-      match_created->map = malloc(size*sizeof(char));
+      match_created->map = malloc(size*sizeof(char*));
 
       if (!(match_created->map)) {
 
@@ -1804,7 +2007,7 @@ Match* init_match(int socket_for_thread, User* creator, int size){
       for(i=0; i < size; i++){
 
             match_created->map[i] = malloc(size*sizeof(char));
-            if (!(match_created->map)) {
+            if (!(match_created->map[i])) {
 
                   perror("malloc");
                   close(socket_for_thread);
@@ -1813,35 +2016,6 @@ Match* init_match(int socket_for_thread, User* creator, int size){
             }
 
       }
-
-      //Random creation of the map
-      int num_of_blocks = size/16;        //Number of 16x16 blocks of the map
-      for(i=0; i < num_of_blocks; i++){
-
-            for(j=0; j < num_of_blocks; j++){
-                  
-                  int random_preset = rand() % 4;
-                  z = 0;
-                  k = 0;
-
-                  for(x = i*16; x < (i+1)*16; x++, z++){
-
-                        for(y = j*16; y < (j+1)*16; y++, k++){
-
-                              match_created->map[x][y] = array_of_map_presets[random_preset][z][k];
-
-                        }
-
-
-                  }
-
-
-            }
-
-
-      }
-
-
 
       //Initializing mutex and condition variables
       pthread_mutex_init(&match_created->match_mutex, NULL);
@@ -1884,6 +2058,8 @@ static void* handle_client(void* arg){
       pthread_setspecific(key_for_socket, ptr_socket_for_thread);
 
       User* current_user = handle_starting_interaction(socket_for_thread);
+
+      handle_session(socket_for_thread, current_user);
 
 
       
