@@ -123,6 +123,8 @@ typedef struct Message_with_local_information{
 
       uint32_t players_position[MAX_PLAYERS_MATCH][2];        //Every row has 2 cells, if a player is in the local map, its cells are not size of the map + 1
 
+      uint32_t receiver_id;                                   //Id_in_match of the player who is receiving the message, used to know its data from the array players_position 
+
       char local_map[5][5];
 
       char message[40];
@@ -132,6 +134,8 @@ typedef struct Message_with_local_information{
 typedef struct Global_Info_Header{
       
       uint32_t players_position[MAX_PLAYERS_MATCH][2];      //Every row has 2 cells, if a player is in the global map, its cells are not size of the map + 1
+
+      uint32_t receiver_id;                                   //Id_in_match of the player who is receiving the message, used to know its data from the array players_position 
 
       uint32_t size;                                        //Global map size
 
@@ -2150,6 +2154,8 @@ Message_with_local_information* get_message_with_local_information(Match_list_no
       pthread_cond_signal(&match_node->match->match_cond_var);
       pthread_mutex_unlock(&match_node->match->match_mutex);
 
+      message_with_local_information->receiver_id = htonl((uint32_t)id_in_match);
+
       return message_with_local_information;
 
 
@@ -2174,6 +2180,7 @@ void send_global_map_to_client(int socket_for_thread, Match_list_node* match_nod
       //Build the info in the header
       Global_Info_Header header;
       header.size = htonl((uint32_t)size);
+      header.receiver_id = htonl((uint32_t)id_in_match);
 
       pthread_mutex_lock(&match_node->match->match_mutex);
 
