@@ -890,6 +890,7 @@ User* handle_login(int socket_for_thread){
       recv_string(socket_for_thread, password, sizeof(password), 0);
 
       unsigned int res = login(username, password);
+      uint32_t status_code;         //status code to send to the client together with the message
 
       if(res == 0){
             
@@ -906,12 +907,18 @@ User* handle_login(int socket_for_thread){
 
             strcpy(current_user->username, username);
 
+            status_code = htonl(0);
+            send_all(socket_for_thread, &status_code, sizeof(status_code));
+
             char login_success_message[] = "\nLogin effettuato con successo!\n";
             send_all(socket_for_thread, login_success_message, sizeof(login_success_message));
 
             return current_user;
 
       }else{
+
+            status_code = htonl(1);
+            send_all(socket_for_thread, &status_code, sizeof(status_code));
 
             char login_error_message[] = "\nLogin fallito!\nCosa si desidera fare?\n1)Riprova\n2)Effettuare la registrazione\n3)Esci\n";
 
@@ -945,7 +952,7 @@ User* handle_login(int socket_for_thread){
                               pthread_exit(0);
 
                         default:
-                              char error_message[] = "\nOpzione non valida!\nInserire il numero relativo all'opzione che si desidera:\n1)Login\n2)Registrazione\n3)Esci\n";
+                              char error_message[] = "\nOpzione non valida!\nInserire il numero relativo all'opzione che si desidera:1)Riprova login\n2)Effettuare la registrazione\n3)Esci\n";
                               send_all(socket_for_thread, error_message, sizeof(error_message));
                               break;
                   }
@@ -973,6 +980,7 @@ User* handle_registration(int socket_for_thread){
       recv_string(socket_for_thread, password, sizeof(password), 0);
 
       unsigned int res = registration(username, password);
+      uint32_t status_code;         //status code to send to the client together with the message
 
       if(res == 0){
             
@@ -989,12 +997,18 @@ User* handle_registration(int socket_for_thread){
 
             strcpy(current_user->username, username);
 
+            status_code = htonl(0);
+            send_all(socket_for_thread, &status_code, sizeof(status_code));
+
             char registration_success_message[] = "\nRegistrazione effettuata con successo!\n";
             send_all(socket_for_thread, registration_success_message, sizeof(registration_success_message));
 
             return current_user;
 
       }else {
+
+            status_code = htonl(1);
+            send_all(socket_for_thread, &status_code, sizeof(status_code));
 
             char registration_username_error_message[] = "\nRegistrazione fallita perchè lo username è già in uso!\nCosa si desidera fare?\n1)Riprova\n2)Effettuare il login\n3)Esci\n";
             char registration_generic_error_message[] = "\nRegistrazione fallita!\nCosa si desidera fare?\n1)Riprova\n2)Effettuare il login\n3)Esci\n";
