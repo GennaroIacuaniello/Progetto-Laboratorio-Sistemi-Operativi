@@ -1,11 +1,22 @@
+//Compile: gcc -o client.out client.c
+//Run: ./client IP PORT
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
-#include <pthread.h>
-#include <arpa/inet.h>
+#include <errno.h>
+#include <signal.h>
+//#include <pthread.h>
+#include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+
+//Max messages lenght
+#define MAX_LENGHT 4096
 
 //Commands to see the map full screen
 #define ENTER_ALT_SCREEN "\033[?1049h" // Entra nello schermo intero
@@ -42,12 +53,57 @@ const char* bg_colors[4] = {
 
 void check_terminal_size();         //Initial function to warn the user in case of too litle terminal
 
+ssize_t send_all(int socket_fd, const void* buf, size_t n);
+ssize_t recv_all(int socket_fd, void* buf, size_t n, int flags);
 
+void handle_starting_interaction(int socket_fd);
+void handle_login(int socket_for_thread);
+void handle_registration(int socket_for_thread);
 
 int main(int argc, char* argv[]) {
 
+    signal(SIGPIPE, SIG_IGN);
+
     //Initial terminal size check
     check_terminal_size();
+
+    int socket_fd;
+    struct sockaddr_in server_addr;
+
+    if (argc != 3) {
+        fprintf(stderr, "usage: %s <server_ip> <port>\n", argv[0]);
+        exit(1);
+    }
+
+    socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (socket_fd < 0) {
+        perror("socket");
+        exit(1);
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port   = htons(atoi(argv[2]));
+
+    if (inet_pton(AF_INET, argv[1], &server_addr.sin_addr) <= 0) {
+        perror("inet_pton");
+        exit(1);
+    }
+
+    if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("connect");
+        exit(1);
+    }
+
+    printf("Connesso al server %s:%s\n", argv[1], argv[2]);
+    sleep(1);
+
+    //Entering "full screen mode"
+    printf("\033[?1049h"); // ENTER_ALT_SCREEN
+    printf("\033[2J\033[H"); // CLEAR_SCREEN and CURSOR_HOME to put the cursor at the top left corner of the screen
+    fflush(stdout); //To forse the start of the "mode"
+
+    handle_starting_interaction(socket_fd);
 
 
     return 0;
@@ -69,11 +125,11 @@ void check_terminal_size() {
     }
 
     //50 rows guarantees space for the biggest map (48x48 + border/message)
-    if (w.ws_row < 50 || w.ws_col < 100) {
+    if (w.ws_row <= 50 || w.ws_col < 100) {
         printf("\n======================================================\n");
         printf("[ATTENZIONE] Il tuo terminale è troppo piccolo!\n");
         printf("Attuale: %d righe x %d colonne.\n", w.ws_row, w.ws_col);
-        printf("Consigliato: almeno 50 righe x 100 colonne.\n\n");
+        printf("Consigliato: almeno 51 righe x 100 colonne.\n\n");
         printf("Per visualizzare correttamente la mappa di gioco più grande (48x48),\n");
         printf("ti consigliamo di ingrandire la finestra del terminale a tutto schermo\n");
         printf("oppure di rimpicciolire leggermente il font (usa Ctrl e il tasto '-' o '+').\n");
@@ -84,3 +140,214 @@ void check_terminal_size() {
     }
 
 }
+
+
+ssize_t send_all(int socket_fd, const void* buf, size_t n){
+
+      size_t sent = 0;
+      const char* ptr = (const char*)buf;
+
+      while(sent < n){
+
+            ssize_t w = send(socket_fd, ptr + sent, (size_t)(n - sent), 0);
+
+            if (w < 0) { 
+
+                  if (errno == EINTR) 
+                        continue; 
+            
+                  if (errno == EPIPE) {
+                        perror("Server morto\n");
+                        close(socket_fd);
+                        exit(1);
+                  }
+
+                  perror("send"); 
+                  close(socket_fd); 
+                  exit(1);
+            }
+
+            sent += (size_t)w;
+      }
+
+      return (ssize_t)sent;
+      
+}
+
+ssize_t recv_all(int socket_fd, void* buf, size_t n, int flags){
+
+      size_t received = 0;
+      char* ptr = (char*)buf;
+
+      while(received < n){
+
+            ssize_t r = recv(socket_fd, ptr + received, (size_t)(n - received), flags);
+
+            if( r < 0 ){
+
+                  if(errno == EINTR)
+                        continue;
+
+                  if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                        if (received == 0) {
+                              return -1;
+                        } else {
+                              continue;
+                        }
+                  }
+                  
+                  perror("recv"); 
+                  close(socket_fd); 
+                  exit(1); 
+
+            }
+
+            if( r == 0 )       //connection closed
+                  return (ssize_t)received;
+
+
+            received += (size_t)r;
+
+
+      }
+
+      return (ssize_t)received;
+
+}
+
+ssize_t recv_string(int socket_fd, char* buf, size_t max_len, int flags) {
+
+    size_t received = 0;
+    char c;
+
+    //Read until the max is reached, leaving 1 place for string terminator '\0'
+    while (received < max_len - 1) {
+        
+        ssize_t r = recv(socket_fd, &c, (size_t)1, flags); // Reads 1 char
+
+        if (r < 0) {
+
+            if (errno == EINTR) 
+                continue;
+            
+            
+            if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (received == 0) {
+
+                    return -1; 
+
+                } else {
+                    
+                    usleep(5000);   //5 ms
+
+                    continue;
+                }
+            }
+
+            //Real error
+            perror("recv");
+            exit(1);
+        }
+
+        if (r == 0) {
+            //connection closed
+            printf("\nConnessione chiusa dal server.\n");
+            exit(0);
+        }
+
+        buf[received] = c;
+        received++;
+
+        //Stops if receives string terminator '\0'
+        if (c == '\0') {
+            break;
+        }
+    }
+
+    buf[received] = '\0';
+
+    return received;
+
+}
+
+void handle_starting_interaction(int socket_fd){
+
+    char start_message[MAX_LENGHT];
+
+    recv_string(socket_fd, start_message, MAX_LENGHT, 0);
+
+    int done = 0;
+
+    while (done == 0){
+
+        //CLEAR_SCREEN and CURSOR_HOME to put the cursor at the top left corner of the screen
+        printf("\033[2J\033[H");
+
+        printf("%s", start_message);
+
+        uint32_t option;
+        uint32_t option_to_send;
+
+        if (scanf("%u", &option) != 1) {
+            printf("Errore di lettura dell'input.\n");
+            exit(1);
+        }
+
+        //Cleans the buffer
+        int c;
+        while ((c = getchar()) != '\n' && c != EOF);
+
+
+        option_to_send = htonl(option);
+
+
+        send_all(socket_fd, &option_to_send, sizeof(option_to_send));
+
+        switch (option){
+                case 1:
+                    done = 1;
+                    handle_login(socket_fd);
+                    return;
+                case 2:
+                    done = 1;
+                    handle_registration(socket_fd);
+                    return;
+                case 3:
+                    done = 1;
+
+                    recv_string(socket_fd, start_message, MAX_LENGHT, 0);
+
+                    close(socket_fd);
+
+                    printf("\033[?1049l"); // EXIT_ALT_SCREEN
+                    fflush(stdout);
+
+                    printf("%s", start_message);
+                    
+                    exit(0);
+                    break;
+
+                default:
+                    recv_string(socket_fd, start_message, MAX_LENGHT, 0);
+                    break;
+        }
+
+    }
+
+
+}
+
+void handle_login(int socket_for_thread){
+
+
+
+
+}
+
+void handle_registration(int socket_for_thread){
+
+
+
+
+}
+

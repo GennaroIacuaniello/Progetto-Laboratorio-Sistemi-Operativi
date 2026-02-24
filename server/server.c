@@ -1,3 +1,6 @@
+//Compile: gcc server.c -o server.out -lpthread
+//Run: ./server.out
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,7 +57,7 @@ mappe: 4 preset 16x16 scelti casualmente dal server (forse?)
 
 typedef struct User{
 
-      unsigned char username[64];
+      char username[64];
       unsigned long hashed_password;
 
 }User;
@@ -79,7 +82,7 @@ typedef struct Maps_list_node{
 
 typedef struct User_in_match{
 
-      unsigned char username[64];
+      char username[64];
       pthread_t tid;                //tid of the thread of the user, used to send signals
       unsigned int x;
       unsigned int y;
@@ -323,8 +326,8 @@ User* handle_login(int socket_for_thread);
 User* handle_registration(int socket_for_thread);
 
 
-unsigned int login(unsigned char* username, unsigned char* password);
-unsigned int registration(unsigned char* username, unsigned char* password);
+unsigned int login(char* username, char* password);
+unsigned int registration(char* username, char* password);
 unsigned long hash(unsigned char *str);
 
 
@@ -509,7 +512,7 @@ int main(int argc, char* argv[]){
 
 
 
-unsigned int login(unsigned char* username, unsigned char* password){
+unsigned int login(char* username, char* password){
 
 
       pthread_mutex_lock(&users_file_mutex);
@@ -520,7 +523,7 @@ unsigned int login(unsigned char* username, unsigned char* password){
       users_file_free = 0;
 
       FILE* file_users = fopen("users.dat", "rb");
-      unsigned long hashed_password = hash(password);
+      unsigned long hashed_password = hash((unsigned char*)password);
 
       if(file_users != NULL){
             
@@ -563,7 +566,7 @@ unsigned int login(unsigned char* username, unsigned char* password){
 
 }
 
-unsigned int registration(unsigned char* username, unsigned char* password){
+unsigned int registration(char* username, char* password){
 
       pthread_mutex_lock(&users_file_mutex);
 
@@ -596,7 +599,7 @@ unsigned int registration(unsigned char* username, unsigned char* password){
             }
             
             strcpy(current_user.username, username);
-            unsigned long hashed_password = hash(password);
+            unsigned long hashed_password = hash((unsigned char*)password);
             current_user.hashed_password = hashed_password;
 
             fwrite(&current_user, sizeof(User), 1, file_users);
@@ -626,8 +629,8 @@ unsigned long hash(unsigned char *str){
     unsigned long hash = 5381;
     int c;
 
-    while (c = *str++)
-        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+    while ((c = *str++))
+            hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
 
     return hash;
 
@@ -637,7 +640,7 @@ unsigned long hash(unsigned char *str){
 ssize_t send_all(int socket_for_thread, const void* buf, size_t n){
 
       size_t sent = 0;
-      const void* ptr = buf;
+      const char* ptr = (const char*)buf;
 
       while(sent < n){
 
@@ -669,7 +672,7 @@ ssize_t send_all(int socket_for_thread, const void* buf, size_t n){
 ssize_t recv_all(int socket_for_thread, void* buf, size_t n, int flags){
 
       size_t received = 0;
-      void* ptr = buf;
+      char* ptr = (char*)buf;
 
       while(received < n){
 
@@ -712,10 +715,10 @@ ssize_t recv_string(int socket_for_thread, char* buf, size_t max_len, int flags)
       size_t received = 0;
       char c;
 
-      //Read until the max is reashed, leaving 1 place for string terminator '\0'
+      //Read until the max is reached, leaving 1 place for string terminator '\0'
       while (received < max_len - 1) {
             
-            ssize_t r = recv(socket_for_thread, &c, (size_t)1, flags); // Reads 1 byte
+            ssize_t r = recv(socket_for_thread, &c, (size_t)1, flags); // Reads 1 char
 
             if (r < 0) {
 
@@ -861,14 +864,14 @@ User* handle_starting_interaction(int socket_for_thread){
                         pthread_exit(0);
 
                   default:
-                        char error_message[] = "\nOpzione non valida!\nInserire il numero relativo all'opzione che si desidera:\n1)Login\n2)Registrazione\n3)Esci\n";
+                        char error_message[] = "\n        DUNGEONS & COLORS        \n\nOpzione non valida!\nInserire il numero relativo all'opzione che si desidera:\n1)Login\n2)Registrazione\n3)Esci\n";
                         send_all(socket_for_thread, error_message, sizeof(error_message));
                         break;
             }
 
       }
       
-      
+      return NULL;
 
 }
 
@@ -952,7 +955,7 @@ User* handle_login(int socket_for_thread){
 
 
       }
-
+      return NULL;
 }
 
 User* handle_registration(int socket_for_thread){
@@ -1039,7 +1042,7 @@ User* handle_registration(int socket_for_thread){
 
 
       }
-
+      return NULL;
 }
 
 
@@ -1665,6 +1668,7 @@ char* get_message_list_of_players_and_size(int socket_for_thread, User* current_
       }
 
       handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+      return NULL;
 }
 
 void start_match(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match){
@@ -1843,7 +1847,6 @@ void change_map_size(int socket_for_thread, Match_list_node* match_node, User* c
                   pthread_exit(0);
             }
 
-            int j, x, y, z, k;
             for(i=0; i < size; i++){
 
                   match_node->match->map[i] = malloc(size*sizeof(char));
@@ -2535,7 +2538,6 @@ Match* init_match(int socket_for_thread, User* creator, int size){
             pthread_exit(0);
       }
 
-      int j, x, y, z, k;
       for(i=0; i < size; i++){
 
             match_created->map[i] = malloc(size*sizeof(char));
@@ -2599,7 +2601,8 @@ static void* handle_client(void* arg){
 
       User* current_user = handle_starting_interaction(socket_for_thread);
 
-      handle_session(socket_for_thread, current_user);
+      if(current_user != NULL)
+            handle_session(socket_for_thread, current_user);
 
 
       
