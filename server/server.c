@@ -146,7 +146,7 @@ int next_match_id_free = 1;
 
 uint32_t next_match_id = 1;
 
-pthread_key_t key_for_socket;       //variable used for thread_specific_data for the socket associated to the thread
+//pthread_key_t key_for_socket;       //variable used for thread_specific_data for the socket associated to the thread
 
 
 //Variables used as maps pre-sets
@@ -327,7 +327,7 @@ unsigned long hash(unsigned char *str);
 void handle_session(int socket_for_thread, User* current_user);
 void lobby_creation(int socket_for_thread, User* current_user);
 void join_lobby(int socket_for_thread, User* current_user);
-char* get_message_with_matches_info(int error_flag);
+char* get_message_with_matches_info(int socket_for_thread, int error_flag);
 unsigned int join_spcific_lobby(int socket_for_thread, User* current_user, Match_list_node* match_to_join);
 
 void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
@@ -397,7 +397,7 @@ int main(int argc, char* argv[]){
 
       srand(time(NULL));
 
-      pthread_key_create(&key_for_socket, NULL);
+      //pthread_key_create(&key_for_socket, NULL);
 
       //se non esiste già, crea il file "database" di utenti
       int fd = open("users.dat", O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
@@ -491,7 +491,7 @@ int main(int argc, char* argv[]){
 
       close(listen_socket);
 
-      pthread_key_delete(key_for_socket);
+      //pthread_key_delete(key_for_socket);
 
       return 0;
 }
@@ -1152,7 +1152,7 @@ void lobby_creation(int socket_for_thread, User* current_user){
 
 void join_lobby(int socket_for_thread, User* current_user){
 
-      char* message_with_matches_info = get_message_with_matches_info(0);     //normal call, no error occurred
+      char* message_with_matches_info = get_message_with_matches_info(socket_for_thread, 0);     //normal call, no error occurred
 
       send_all(socket_for_thread, message_with_matches_info, strlen(message_with_matches_info) + 1);
 
@@ -1201,7 +1201,7 @@ void join_lobby(int socket_for_thread, User* current_user){
             }
 
             free(message_with_matches_info);
-            message_with_matches_info = get_message_with_matches_info(1);     //Id specified not available, call with error_flag set
+            message_with_matches_info = get_message_with_matches_info(socket_for_thread, 1);     //Id specified not available, call with error_flag set
             send_all(socket_for_thread, message_with_matches_info, strlen(message_with_matches_info) + 1);
 
             if(strcmp(message_with_matches_info, "\nNon sono disponili lobby in cui entrare!\n") == 0){
@@ -1217,14 +1217,14 @@ void join_lobby(int socket_for_thread, User* current_user){
       
 }
 
-char* get_message_with_matches_info(int error_flag){
+char* get_message_with_matches_info(int socket_for_thread, int error_flag){
 
       char* matches_info = malloc(sizeof(char) * 4096);
 
       if (!matches_info) {
 
             perror("malloc");
-            close( *( (int*) (pthread_getspecific(key_for_socket))) );
+            close(socket_for_thread);
 
             pthread_exit(0);
       }
@@ -1424,8 +1424,22 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
 
                         switch (option){
                               case 1:
-                                    start_match(socket_for_thread, match_node, current_user, id_in_match);    //TO DOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-                                    return;
+                                    start_match(socket_for_thread, match_node, current_user, id_in_match);
+                                    //after match ending, back in this function
+
+                                    if(list_of_players_and_size != NULL) 
+                                          free(list_of_players_and_size);
+
+                                    list_of_players_and_size = get_message_list_of_players_and_size(socket_for_thread, current_user, match_node, id_in_match);
+                                    
+                                    strcpy(message_host, "\n        DUNGEONS & COLORS        \n\nSei nella tua lobby!\nInserire il numero relativo all'opzione che si desidera:\n1)Inizia partita\n2)Cambia dimensione mappa\n3)Esci dalla lobby\n4)Esci dal gioco\n");
+                                    
+                                    strcat(message_host, list_of_players_and_size);
+                                    
+                                    send_all_in_match(socket_for_thread, message_host, strlen(message_host) + 1, match_node, current_user, id_in_match);
+                                    
+                                    break;
+
                               case 2:
                                     change_map_size(socket_for_thread, match_node, current_user, id_in_match);
                                     send_all_in_match(socket_for_thread, message_host, strlen(message_host) + 1, match_node, current_user, id_in_match);
@@ -1511,7 +1525,17 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
                   pthread_mutex_unlock(&match_node->match->match_mutex);
 
                   handle_being_in_match(socket_for_thread, match_node, current_user, id_in_match);
-                  return;
+                  //no return, after match ending, back in this function
+                  if(list_of_players_and_size != NULL) 
+                        free(list_of_players_and_size);
+
+                  list_of_players_and_size = get_message_list_of_players_and_size(socket_for_thread, current_user, match_node, id_in_match);
+                  
+                  strcpy(message_guest, "\n        DUNGEONS & COLORS        \n\nSei in una lobby!\nAttendere l'inizio della partita oppure inserire il numero relativo all'opzione che si desidera:\n1)Esci dalla lobby\n2)Esci dal gioco\n");
+                  
+                  strcat(message_guest, list_of_players_and_size);
+                  
+                  send_all_in_match(socket_for_thread, message_guest, strlen(message_guest) + 1, match_node, current_user, id_in_match);
 
             }else{
                   
@@ -1590,6 +1614,7 @@ char* get_message_list_of_players_and_size(int socket_for_thread, User* current_
 
                         perror("malloc");
                         handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+                  
                   }
 
                   strcpy(list_of_players_and_size, "\nGiocatori connessi: ");
@@ -1720,6 +1745,7 @@ void start_match(int socket_for_thread, Match_list_node* match_node, User* curre
 
                   }
 
+                  match_node->match->map[x][y] = colors[i];
 
             }
 
@@ -1787,6 +1813,13 @@ void change_map_size(int socket_for_thread, Match_list_node* match_node, User* c
 
             int i;        
 
+            pthread_mutex_lock(&match_node->match->match_mutex);
+
+            while(match_node->match->match_free == 0)
+                  pthread_cond_wait(&match_node->match->match_cond_var, &match_node->match->match_mutex);
+
+            match_node->match->match_free = 0;
+
             //Deallocating previous map
             for(i = 0; i < match_node->match->size; i++)
                   free(match_node->match->map[i]);
@@ -1819,6 +1852,10 @@ void change_map_size(int socket_for_thread, Match_list_node* match_node, User* c
                   }
 
             }
+
+            match_node->match->match_free = 1;
+            pthread_cond_signal(&match_node->match->match_cond_var);
+            pthread_mutex_unlock(&match_node->match->match_mutex);
             
       }
       
@@ -2029,6 +2066,8 @@ void handle_being_in_match(int socket_for_thread, Match_list_node* match_node, U
             now = time(NULL);
             if (now - match_start >= timer) {
 
+                  free(message_with_local_information);
+
                   handle_match_ending(socket_for_thread, match_node, current_user, id_in_match);
                   return;
 
@@ -2223,6 +2262,7 @@ void move(Match_list_node* match_node, int id_in_match, int new_x, int new_y){
       int i;
       int size = match_node->match->size;
       int available_pos = 1;
+
       pthread_mutex_lock(&match_node->match->match_mutex);
 
       while(match_node->match->match_free == 0)
@@ -2266,8 +2306,126 @@ void move(Match_list_node* match_node, int id_in_match, int new_x, int new_y){
 
 void handle_match_ending(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match){
 
+      char* ending_message = malloc(sizeof(char) * 1024);
+
+      if (!ending_message){
+
+            perror("malloc");
+            handle_client_death_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+
+      }
+
+      int num_cells_for_player[MAX_PLAYERS_MATCH] = {0};
+
+      int i, j;
+      int size = match_node->match->size;
+      int max = -1, winner = 0, draw = 0;
+
+      sleep(1);         //To be sure every player has finished
+
+      //Doesn't lock the mutex to let all players threads read data synchronous, it's only read, no one will modify
+
+      for(i = 0; i < size; i++){
+
+            for(j = 0; j < size; j++){
+
+                  char current_cell = match_node->match->map[i][j];
+
+                  if (current_cell == colors[0]) {
+
+                        num_cells_for_player[0]++;
+
+                  } else if (current_cell == colors[1]) {
+
+                        num_cells_for_player[1]++;
+
+                  } else if (current_cell == colors[2]) {
+
+                        num_cells_for_player[2]++;
+
+                  } else if (current_cell == colors[3]) {
+
+                        num_cells_for_player[3]++;
+                        
+                  }
 
 
+            }
+
+
+      }
+
+      strcpy(ending_message, "\nLa partita è terminata!\nEcco i risultati:\n\n");
+
+      //Now locks the mutex for this final part, in case some clients disconnect in the process
+      pthread_mutex_lock(&match_node->match->match_mutex);
+
+      while(match_node->match->match_free == 0)
+            pthread_cond_wait(&match_node->match->match_cond_var, &match_node->match->match_mutex);
+
+      match_node->match->match_free = 0;
+
+      for(i = 0; i < MAX_PLAYERS_MATCH; i++){
+            if(match_node->match->players[i] != NULL){
+                  strcat(ending_message, "Giocatore ");
+                  strcat(ending_message, match_node->match->players[i]->username);
+                  strcat(ending_message, "\tPunti : ");
+
+                  char string_number[10] = {0};
+
+                  sprintf(string_number, "%d", num_cells_for_player[i]);
+
+                  strcat(ending_message, string_number);
+
+                  strcat(ending_message, "\n");
+
+                  if(num_cells_for_player[i] > max){
+
+                        max = num_cells_for_player[i];
+                        winner = i;
+                        draw = 0;
+
+                  }else if(num_cells_for_player[i] == max){
+
+                        draw = 1;
+
+                  }
+                        
+
+            }
+      }
+
+      match_node->match->status = NOT_IN_PROGRESS;
+
+      if(draw == 0){
+
+            strcat(ending_message, "\nIl vincitore è il giocatore ");
+            strcat(ending_message, match_node->match->players[winner]->username);
+
+      }else{
+
+            strcat(ending_message, "\nC'e' stato un pareggio, i vincitori sono i giocatori:\n\n");
+            for(i = 0; i < MAX_PLAYERS_MATCH; i++){
+                  if(match_node->match->players[i] != NULL)
+                        if(num_cells_for_player[i] == max){
+                              strcat(ending_message, match_node->match->players[i]->username);
+                              strcat(ending_message, "\n");
+                        }
+            }
+
+
+      }
+
+      match_node->match->match_free = 1;
+      pthread_cond_signal(&match_node->match->match_cond_var);
+      pthread_mutex_unlock(&match_node->match->match_mutex);
+
+      send_all_in_match(socket_for_thread, ending_message, strlen(ending_message) + 1, match_node, current_user, id_in_match);
+
+      free(ending_message);
+
+      //handle_being_in_lobby(socket_for_thread, match_node, current_user, id_in_match);
+      //not needed thanks to the returns
 
 }
 
@@ -2423,10 +2581,14 @@ static void* handle_client(void* arg){
       int socket_for_thread = *(int *) arg;
       free(arg);
 
+      /*
       int* ptr_socket_for_thread = malloc(sizeof(int));
       *ptr_socket_for_thread = socket_for_thread;
+      
 
       pthread_setspecific(key_for_socket, ptr_socket_for_thread);
+
+      */
 
       User* current_user = handle_starting_interaction(socket_for_thread);
 
@@ -2549,7 +2711,7 @@ static void* handle_client(void* arg){
 
             */
 
-      free(ptr_socket_for_thread);
+      //free(ptr_socket_for_thread);
 
       return NULL;
 
