@@ -1010,7 +1010,7 @@ User* handle_registration(int socket_for_thread){
             status_code = htonl(1);
             send_all(socket_for_thread, &status_code, sizeof(status_code));
 
-            char registration_username_error_message[] = "\nRegistrazione fallita perchè lo username è già in uso!\nCosa si desidera fare?\n1)Riprova\n2)Effettuare il login\n3)Esci\n";
+            char registration_username_error_message[] = "\nRegistrazione fallita perchè lo username è gia' in uso!\nCosa si desidera fare?\n1)Riprova\n2)Effettuare il login\n3)Esci\n";
             char registration_generic_error_message[] = "\nRegistrazione fallita!\nCosa si desidera fare?\n1)Riprova\n2)Effettuare il login\n3)Esci\n";
             
             if(res == 1)

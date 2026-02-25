@@ -208,15 +208,53 @@ ssize_t send_all(int socket_fd, const void* buf, size_t n){
                   if (errno == EPIPE) {
                         perror("Server morto\n");
                         close(socket_fd);
-                        disable_terminal_game_mode();
-                        printf("\033[?1049l"); // EXIT_ALT_SCREEN
-                        fflush(stdout);
                         exit(1);
                   }
 
                   perror("send"); 
                   close(socket_fd); 
                   exit(1);
+            }
+
+            sent += (size_t)w;
+      }
+
+      return (ssize_t)sent;
+      
+}
+
+ssize_t send_all_in_match(int socket_fd, const void* buf, size_t n){
+
+      size_t sent = 0;
+      const char* ptr = (const char*)buf;
+
+      while(sent < n){
+
+            ssize_t w = send(socket_fd, ptr + sent, (size_t)(n - sent), 0);
+
+            if (w < 0) { 
+
+                if (errno == EINTR) 
+                    continue; 
+        
+                if (errno == EPIPE) {
+                    perror("Server morto\n");
+                    close(socket_fd);
+                    sleep(2);
+                    disable_terminal_game_mode();
+                    printf("\033[?1049l"); // EXIT_ALT_SCREEN
+                    fflush(stdout);
+                    exit(1);
+                }
+
+                perror("send"); 
+                close(socket_fd);
+                sleep(2);
+                disable_terminal_game_mode();
+                printf("\033[?1049l"); // EXIT_ALT_SCREEN
+                fflush(stdout);
+                exit(1);
+
             }
 
             sent += (size_t)w;
@@ -250,6 +288,48 @@ ssize_t recv_all(int socket_fd, void* buf, size_t n, int flags){
                   
                 perror("recv"); 
                 close(socket_fd); 
+                exit(1); 
+
+            }
+
+            if( r == 0 )       //connection closed
+                  return (ssize_t)received;
+
+
+            received += (size_t)r;
+
+
+      }
+
+      return (ssize_t)received;
+
+}
+
+ssize_t recv_all_in_match(int socket_fd, void* buf, size_t n, int flags){
+
+      size_t received = 0;
+      char* ptr = (char*)buf;
+
+      while(received < n){
+
+            ssize_t r = recv(socket_fd, ptr + received, (size_t)(n - received), flags);
+
+            if( r < 0 ){
+
+                if(errno == EINTR)
+                    continue;
+
+                if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                    if (received == 0) {
+                            return -1;
+                    } else {
+                            continue;
+                    }
+                }
+                    
+                perror("recv"); 
+                close(socket_fd);
+                sleep(2);
                 disable_terminal_game_mode();
                 printf("\033[?1049l"); // EXIT_ALT_SCREEN
                 fflush(stdout);
@@ -302,6 +382,64 @@ ssize_t recv_string(int socket_fd, char* buf, size_t max_len, int flags) {
             //Real error
             perror("recv");
             close(socket_fd);
+            exit(1);
+            
+        }
+
+        if (r == 0) {
+            //connection closed
+            printf("\nConnessione chiusa dal server.\n");
+            exit(0);
+        }
+
+        buf[received] = c;
+        received++;
+
+        //Stops if receives string terminator '\0'
+        if (c == '\0') {
+            break;
+        }
+    }
+
+    buf[received] = '\0';
+
+    return received;
+
+}
+
+ssize_t recv_string_in_match(int socket_fd, char* buf, size_t max_len, int flags) {
+
+    size_t received = 0;
+    char c;
+
+    //Read until the max is reached, leaving 1 place for string terminator '\0'
+    while (received < max_len - 1) {
+        
+        ssize_t r = recv(socket_fd, &c, (size_t)1, flags); // Reads 1 char
+
+        if (r < 0) {
+
+            if (errno == EINTR) 
+                continue;
+            
+            
+            if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (received == 0) {
+
+                    return -1; 
+
+                } else {
+                    
+                    usleep(5000);   //5 ms
+
+                    continue;
+                }
+            }
+
+            //Real error
+            perror("recv");
+            close(socket_fd);
+            sleep(2);
             disable_terminal_game_mode();
             printf("\033[?1049l"); // EXIT_ALT_SCREEN
             fflush(stdout);
@@ -312,6 +450,7 @@ ssize_t recv_string(int socket_fd, char* buf, size_t max_len, int flags) {
         if (r == 0) {
             //connection closed
             printf("\nConnessione chiusa dal server.\n");
+            sleep(2);
             disable_terminal_game_mode();
             printf("\033[?1049l"); // EXIT_ALT_SCREEN
             fflush(stdout);
@@ -1067,7 +1206,7 @@ void handle_being_in_match(int socket_fd){
     uint32_t size_received, size = 0;
 
     //First, reads map's size from the server
-    ssize_t r =recv_all(socket_fd, &size_received, sizeof(size_received), 0);
+    ssize_t r =recv_all_in_match(socket_fd, &size_received, sizeof(size_received), 0);
 
     if (r == sizeof(size_received))
         size = ntohl(size_received);
@@ -1149,7 +1288,7 @@ void handle_being_in_match(int socket_fd){
         //Socket ready: read from server
         if (FD_ISSET(socket_fd, &rset)) {
 
-            ssize_t r = recv_all(socket_fd, &status_received, sizeof(status_received), 0);
+            ssize_t r = recv_all_in_match(socket_fd, &status_received, sizeof(status_received), 0);
 
             if (r == sizeof(status_received)){
                 status_code = ntohl(status_received);
@@ -1209,7 +1348,7 @@ void handle_being_in_match(int socket_fd){
             }
 
             //Sends the move to the server
-            send_all(socket_fd, &option, sizeof(option));
+            send_all_in_match(socket_fd, &option, sizeof(option));
 
         }
         
@@ -1330,7 +1469,7 @@ void handle_local_info(int socket_fd, char** map, uint32_t size){
 
     Message_with_local_information message_with_local_information;
 
-    recv_all(socket_fd, &message_with_local_information, sizeof(message_with_local_information), 0);
+    recv_all_in_match(socket_fd, &message_with_local_information, sizeof(message_with_local_information), 0);
 
     uint32_t my_id = ntohl(message_with_local_information.my_id);
 
@@ -1373,7 +1512,7 @@ void handle_global_info(int socket_fd, char** map, uint32_t size){
 
     Global_Info_Header global_Info_Header;
 
-    recv_all(socket_fd, &global_Info_Header, sizeof(global_Info_Header), 0);
+    recv_all_in_match(socket_fd, &global_Info_Header, sizeof(global_Info_Header), 0);
 
     uint32_t my_id = ntohl(global_Info_Header.my_id);
 
@@ -1400,7 +1539,7 @@ void handle_global_info(int socket_fd, char** map, uint32_t size){
 
     }
 
-    recv_all(socket_fd, new_global_map, size*size*sizeof(char), 0);
+    recv_all_in_match(socket_fd, new_global_map, size*size*sizeof(char), 0);
 
     int i, j;
     for(i = 0; i < size; i++){
@@ -1427,7 +1566,7 @@ void handle_match_ending(int socket_fd){
     char ending_message[MAX_LENGHT];
 
     //Receive ending message
-    recv_string(socket_fd, ending_message, MAX_LENGHT, 0);
+    recv_string_in_match(socket_fd, ending_message, MAX_LENGHT, 0);
 
     printf("%s", ending_message);
 
