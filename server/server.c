@@ -103,7 +103,7 @@ typedef struct Match{         //Colors of the game with 4 players: players[0] = 
       
       Match_status status;                       //status of the match (IN_PROGESS or NOT_IN_PROGESS)
       
-      int size;                                       //Map size
+      uint32_t size;                                       //Map size
       char** map;                                     //Map of the game
 
       pthread_mutex_t match_mutex;                    //used for: players, host, status, size, map
@@ -355,7 +355,7 @@ void handle_move_in_match(Match_list_node* match_node, int id_in_match, char opt
 void move(Match_list_node* match_node, int id_in_match, int new_x, int new_y);
 void handle_match_ending(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match);
 
-Match* init_match(int socket_for_thread, User* creator, int size);
+Match* init_match(int socket_for_thread, User* creator, uint32_t size);
 void free_match(Match* match);
 
 ssize_t send_all(int socket_for_thread, const void* buf, size_t n);
@@ -1112,7 +1112,7 @@ void lobby_creation(int socket_for_thread, User* current_user){
 
       send_all(socket_for_thread, size_request, sizeof(size_request));
 
-      int size;
+      uint32_t size;
       uint32_t option_received, option;
       int done = 0;
 
@@ -1495,6 +1495,15 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
                               case 2:
                                     change_map_size(socket_for_thread, match_node, current_user, id_in_match);
 
+                                    if(list_of_players_and_size != NULL) 
+                                          free(list_of_players_and_size);
+
+                                    list_of_players_and_size = get_message_list_of_players_and_size(socket_for_thread, current_user, match_node, id_in_match);
+                                    
+                                    strcpy(message_host, "\n        DUNGEONS & COLORS        \n\nSei nella tua lobby!\nInserire il numero relativo all'opzione che si desidera:\n1)Inizia partita\n2)Cambia dimensione mappa\n3)Esci dalla lobby\n4)Esci dal gioco\n");
+                                    
+                                    strcat(message_host, list_of_players_and_size);
+
                                     code = htonl(0);
                                     send_all_in_match(socket_for_thread, &code, sizeof(code), match_node, current_user, id_in_match);
 
@@ -1614,9 +1623,9 @@ void handle_being_in_lobby(int socket_for_thread, Match_list_node* match_node, U
             }
 
 
-            //Every 5 sec checks if players or size changed, and if so re-sends the message changing the list of players connected and/or the size
+            //Every second checks if players or size changed, and if so re-sends the message changing the list of players connected and/or the size
             time_t now = time(NULL);
-            if (now - last >= 5) {
+            if (now - last >= 1) {
 
                   char* new_list_of_players_and_size = get_message_list_of_players_and_size(socket_for_thread, current_user, match_node, id_in_match);
 
@@ -1780,7 +1789,7 @@ void start_match(int socket_for_thread, Match_list_node* match_node, User* curre
 
       }
 
-      int size = match_node->match->size;
+      uint32_t size = match_node->match->size;
 
       //Inizialize player position to impossible values (to avoid garbage values)
       for(i=0; i < MAX_PLAYERS_MATCH; i++){
@@ -1852,7 +1861,7 @@ void change_map_size(int socket_for_thread, Match_list_node* match_node, User* c
 
       send_all(socket_for_thread, size_request, sizeof(size_request));
 
-      int size;
+      uint32_t size;
       uint32_t option_received, option;
       int done = 0;
 
@@ -2090,15 +2099,24 @@ void handle_client_death_in_lobby(int socket_for_thread, Match_list_node* match_
 
 void handle_being_in_match(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match){
 
+      uint32_t size = match_node->match->size;
+      int timer = (size % 16) * SECONDS_PER_SIZE;
+
+      uint32_t message_type = 0;          //Code to send to the client to tell message type, 0 = local information, 1 = global information, 2 = match ending
+
+      //First, sends map's size to the client, to let it allocate its map
+      uint32_t size_to_send = htonl(size);
+      send_all(socket_for_thread, &size_to_send, sizeof(size_to_send));
+
       Message_with_local_information* message_with_local_information = get_message_with_local_information(match_node, id_in_match);
+
+      message_type = htonl(0);
+      send_all(socket_for_thread, &message_type, sizeof(message_type));
 
       send_all_in_match(socket_for_thread, message_with_local_information, sizeof(Message_with_local_information), match_node, current_user, id_in_match);
 
       time_t last_global_map = time(NULL);
       time_t match_start = last_global_map;
-
-      int size = match_node->match->size;
-      int timer = (size % 16) * SECONDS_PER_SIZE;
 
       for (;;) {
 
@@ -2111,6 +2129,10 @@ void handle_being_in_match(int socket_for_thread, Match_list_node* match_node, U
                   handle_move_in_match(match_node, id_in_match, option);
                   free(message_with_local_information);
                   message_with_local_information = get_message_with_local_information(match_node, id_in_match);
+
+                  message_type = htonl(0);
+                  send_all(socket_for_thread, &message_type, sizeof(message_type));
+
                   send_all_in_match(socket_for_thread, message_with_local_information, sizeof(Message_with_local_information), match_node, current_user, id_in_match);
 
 
@@ -2133,6 +2155,9 @@ void handle_being_in_match(int socket_for_thread, Match_list_node* match_node, U
             time_t now = time(NULL);
             if (now - last_global_map >= TIMER_GLOBAL_MAP) {
 
+                  message_type = htonl(1);
+                  send_all(socket_for_thread, &message_type, sizeof(message_type));
+
                   send_global_map_to_client(socket_for_thread, match_node, current_user, id_in_match);
                   last_global_map = now;
 
@@ -2143,6 +2168,9 @@ void handle_being_in_match(int socket_for_thread, Match_list_node* match_node, U
             if (now - match_start >= timer) {
 
                   free(message_with_local_information);
+
+                  message_type = htonl(2);
+                  send_all(socket_for_thread, &message_type, sizeof(message_type));
 
                   handle_match_ending(socket_for_thread, match_node, current_user, id_in_match);
                   return;
@@ -2162,7 +2190,7 @@ Message_with_local_information* get_message_with_local_information(Match_list_no
 
       strcpy(message_with_local_information->message, message);
 
-      int size = match_node->match->size;
+      uint32_t size = match_node->match->size;
 
       pthread_mutex_lock(&match_node->match->match_mutex);
 
@@ -2235,7 +2263,7 @@ Message_with_local_information* get_message_with_local_information(Match_list_no
 
 void send_global_map_to_client(int socket_for_thread, Match_list_node* match_node, User* current_user, int id_in_match) {
       
-      int size = match_node->match->size;
+      uint32_t size = match_node->match->size;
 
       //Calculate total size of the message to send
       size_t header_size = sizeof(Global_Info_Header);
@@ -2339,7 +2367,7 @@ void handle_move_in_match(Match_list_node* match_node, int id_in_match, char opt
 void move(Match_list_node* match_node, int id_in_match, int new_x, int new_y){
 
       int i;
-      int size = match_node->match->size;
+      uint32_t size = match_node->match->size;
       int available_pos = 1;
 
       pthread_mutex_lock(&match_node->match->match_mutex);
@@ -2397,7 +2425,7 @@ void handle_match_ending(int socket_for_thread, Match_list_node* match_node, Use
       int num_cells_for_player[MAX_PLAYERS_MATCH] = {0};
 
       int i, j;
-      int size = match_node->match->size;
+      uint32_t size = match_node->match->size;
       int max = -1, winner = 0, draw = 0;
 
       sleep(1);         //To be sure every player has finished
@@ -2548,7 +2576,7 @@ void siguser1_handler(int signal){
 }
 */
 
-Match* init_match(int socket_for_thread, User* creator, int size){
+Match* init_match(int socket_for_thread, User* creator, uint32_t size){
       
       Match* match_created = malloc(sizeof(Match));
       

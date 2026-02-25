@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <termios.h>    //To handle "moving in the map" during the game
 #include <errno.h>
 #include <signal.h>
 //#include <pthread.h>
@@ -44,6 +45,10 @@
 #define FG_WHITE_BOLD "\033[1;37m"
 #define FG_BLACK_BOLD "\033[1;30m"
 
+struct termios orig_termios;        //Used to manipulate input reading during a match
+
+#define MAX_PLAYERS_MATCH 4
+
 //Array of players backgrond colors
 const char* bg_colors[4] = {
     "\033[44m", //0: Blue (b)
@@ -52,8 +57,33 @@ const char* bg_colors[4] = {
     "\033[43m"  //3: yellow (y)
 };
 
+typedef struct Message_with_local_information{
+
+    uint32_t players_position[MAX_PLAYERS_MATCH][2];        //Every row has 2 cells, if a player is in the local map, its cells are not size of the map + 1
+
+    uint32_t receiver_id;                                   //Id_in_match of the player who is receiving the message, used to know its data from the array players_position 
+
+    char local_map[5][5];
+
+    char message[40];
+
+}Message_with_local_information;
+
+typedef struct Global_Info_Header{
+      
+    uint32_t players_position[MAX_PLAYERS_MATCH][2];      //Every row has 2 cells, if a player is in the global map, its cells are not size of the map + 1
+
+    uint32_t my_id;                                   //Id_in_match of the player who is receiving the message, used to know its data from the array players_position 
+
+    uint32_t size;                                        //Global map size
+
+} Global_Info_Header;
+
 
 void check_terminal_size();         //Initial function to warn the user in case of too litle terminal
+
+void enable_terminal_game_mode();       //Enables "game mode" in the terminal
+void disable_terminal_game_mode();      //Disables "game mode" in the terminal
 
 ssize_t send_all(int socket_fd, const void* buf, size_t n);
 ssize_t recv_all(int socket_fd, void* buf, size_t n, int flags);
@@ -885,7 +915,11 @@ void handle_being_in_lobby(int socket_fd){
                 option = UINT_MAX;     //Garbage value to send and so receive "Option not valid"
 
                 if (shutdown(socket_fd, SHUT_WR) < 0) { 
-                    perror("shutdown"); 
+                    perror("shutdown");
+
+                    printf("\033[?1049l"); // EXIT_ALT_SCREEN
+                    fflush(stdout);
+
                     exit(1);
                     break; 
                 }
@@ -965,16 +999,223 @@ void handle_being_in_lobby(int socket_fd){
 
 void handle_change_map_size(int socket_fd){
 
+    char size_request[MAX_LENGHT];
+
+    recv_string(socket_fd, size_request, MAX_LENGHT, 0);
+
+    int done = 0;
+
+    while (done == 0){
+
+        //CLEAR_SCREEN and CURSOR_HOME to put the cursor at the top left corner of the screen
+        printf("\033[2J\033[H");
+
+        printf("%s", size_request);
+
+        uint32_t option;
+        uint32_t option_to_send;
+
+        if (scanf("%u", &option) != 1) {
+            option = UINT_MAX;     //Garbage value to send and so receive "Option not valid"
+        }
+
+        //Cleans the buffer
+        int c;
+        while ((c = getchar()) != '\n' && c != EOF);
 
 
+        option_to_send = htonl(option);
+
+
+        send_all(socket_fd, &option_to_send, sizeof(option_to_send));
+
+        if(option == 0 || option > 3)
+            recv_string(socket_fd, size_request, MAX_LENGHT, 0);
+        else
+            done = 1;
+
+    }
 
 }
 
 
 void handle_being_in_match(int socket_fd){
 
+    enable_terminal_game_mode();
 
+    uint32_t size_received, size = 0;
+
+    //First, reads map's size from the server
+    ssize_t r =recv_all(socket_fd, &size_received, sizeof(size_received), 0);
+
+    if (r == sizeof(size_received))
+        size = ntohl(size_received);
+
+
+    //Allocating the map
+    char** map = malloc(size*sizeof(char*));
+
+    if (!map) {
+
+        perror("malloc");
+        close(socket_fd);
+
+        printf("\033[?1049l"); // EXIT_ALT_SCREEN
+        fflush(stdout);
+
+        printf("%s", "\nErrore fatale\n");
+        
+        exit(0);
+
+    }
+
+    int i, j;
+    for(i=0; i < size; i++){
+
+        map[i] = malloc(size*sizeof(char));
+
+        if (!(map[i])) {
+
+            perror("malloc");
+            close(socket_fd);
+
+            printf("\033[?1049l"); // EXIT_ALT_SCREEN
+            fflush(stdout);
+
+            printf("%s", "\nErrore fatale\n");
+            
+            exit(0);
+
+        }
+
+    }
+
+    //Initialize map all empty ('e')
+    for(i=0; i < size; i++)
+        for(j=0; j < size; j++)
+            map[i][j] = 'e';
+
+    int stdin_open = 1;
+    fd_set rset;
+    
+    char recvline[MAX_LENGHT];
+
+    uint32_t status_received, status_code = 1;
+	
+    while (1) {
+    	
+    	FD_ZERO(&rset);
+    	
+    	if (stdin_open) 
+			FD_SET(STDIN_FILENO, &rset);
+		
+        FD_SET(socket_fd, &rset);
+        
+        int maxfd = (STDIN_FILENO > socket_fd ? STDIN_FILENO : socket_fd) + 1;
+        
+        int nready = select(maxfd, &rset, NULL, NULL, NULL);
+
+        if (nready < 0) {
+
+            if (errno == EINTR) 
+                continue;
+
+            perror("select");
+            close(socket_fd);
+            exit(1);
+            break;
+
+        }
+        
+        //Socket ready: read from server
+        if (FD_ISSET(socket_fd, &rset)) {
+
+            ssize_t r = recv_all(socket_fd, &status_received, sizeof(status_received), 0);
+
+            if (r == sizeof(status_received)){
+                status_code = ntohl(status_received);
+            }else{
+                status_code = UINT_MAX;    //if an error occured, garbage value
+            }
+
+            switch (status_code){
+                case 2:
+                    //Deallocating the map
+                    for(i = 0; i < size; i++)
+                            free(map[i]);
+                    
+                    free(map);
+
+                    disable_terminal_game_mode();
+
+                    handle_match_ending(socket_fd);
+                    return;
+                case 0:
+                    handle_local_info(socket_fd, map);
+                    break;
+                case 1:
+                    handle_global_info(socket_fd, map);
+                    break;
+                default:
+                    //Error occured, do nothing
+                    break;
+            }
+
+        }
+
+        // stdin pronto: leggi e invia al server
+        if (stdin_open && FD_ISSET(STDIN_FILENO, &rset)) {
+
+            char option;
+
+            
+            int nread = read(STDIN_FILENO, &option, 1);     //Reads 1 char (1 byte)
+
+            if (nread <= 0) {
+                //EOF on stdin
+                stdin_open = 0;
+                option = 'l';    // Garbage value
+
+                if (shutdown(socket_fd, SHUT_WR) < 0) { 
+                    perror("shutdown"); 
+                    disable_terminal_game_mode();     //Disables game mode in terminal
+
+                    printf("\033[?1049l"); // EXIT_ALT_SCREEN
+                    fflush(stdout);
+
+                    exit(1);
+                    break; 
+                }
+
+            }
+
+            //Sends the move to the server
+            send_all(socket_fd, &option, sizeof(option));
+
+        }
+        
+    }
 
     
+}
+
+
+void enable_terminal_game_mode() {
+
+    tcgetattr(STDIN_FILENO, &orig_termios); //Saves previous attributes
+    struct termios raw = orig_termios;
+    
+    // Disabilits ECHO (doesn't print pressed keys) and ICANON (to have instant reading, without having to wait to press enter)
+    raw.c_lflag &= ~(ECHO | ICANON); 
+    
+    //Sets new attributes
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+
+}
+
+void disable_terminal_game_mode() {
+
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);  //Sets previous attributes
+
 }
 
