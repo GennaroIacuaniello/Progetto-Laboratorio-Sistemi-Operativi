@@ -28,12 +28,6 @@ void check_terminal_size();         //Initial function to warn the user in case 
 void handle_starting_interaction(int socket_fd);
 
 
-
-
-
-
-
-
 int main(int argc, char* argv[]) {
 
     signal(SIGPIPE, SIG_IGN);
