@@ -111,6 +111,7 @@ void handle_match_ending(int socket_fd);
 int main(int argc, char* argv[]) {
 
     signal(SIGPIPE, SIG_IGN);
+    tcgetattr(STDIN_FILENO, &orig_termios);
 
     //Initial terminal size check
     check_terminal_size();
@@ -207,6 +208,9 @@ ssize_t send_all(int socket_fd, const void* buf, size_t n){
                   if (errno == EPIPE) {
                         perror("Server morto\n");
                         close(socket_fd);
+                        disable_terminal_game_mode();
+                        printf("\033[?1049l"); // EXIT_ALT_SCREEN
+                        fflush(stdout);
                         exit(1);
                   }
 
@@ -233,20 +237,23 @@ ssize_t recv_all(int socket_fd, void* buf, size_t n, int flags){
 
             if( r < 0 ){
 
-                  if(errno == EINTR)
-                        continue;
+                if(errno == EINTR)
+                    continue;
 
-                  if(errno == EAGAIN || errno == EWOULDBLOCK) {
-                        if (received == 0) {
-                              return -1;
-                        } else {
-                              continue;
-                        }
-                  }
+                if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                    if (received == 0) {
+                            return -1;
+                    } else {
+                            continue;
+                    }
+                }
                   
-                  perror("recv"); 
-                  close(socket_fd); 
-                  exit(1); 
+                perror("recv"); 
+                close(socket_fd); 
+                disable_terminal_game_mode();
+                printf("\033[?1049l"); // EXIT_ALT_SCREEN
+                fflush(stdout);
+                exit(1); 
 
             }
 
@@ -294,12 +301,20 @@ ssize_t recv_string(int socket_fd, char* buf, size_t max_len, int flags) {
 
             //Real error
             perror("recv");
+            close(socket_fd);
+            disable_terminal_game_mode();
+            printf("\033[?1049l"); // EXIT_ALT_SCREEN
+            fflush(stdout);
             exit(1);
+            
         }
 
         if (r == 0) {
             //connection closed
             printf("\nConnessione chiusa dal server.\n");
+            disable_terminal_game_mode();
+            printf("\033[?1049l"); // EXIT_ALT_SCREEN
+            fflush(stdout);
             exit(0);
         }
 
