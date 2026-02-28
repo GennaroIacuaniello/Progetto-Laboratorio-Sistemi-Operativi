@@ -249,6 +249,13 @@ char* get_message_with_matches_info(int socket_for_thread, int error_flag){
 
       int lobby_found = 0;          //Checks if at least a lobby is available
 
+      pthread_mutex_lock(&match_list_mutex);
+
+      while(match_list_free == 0)
+            pthread_cond_wait(&match_list_cond_var, &match_list_mutex);
+
+      match_list_free = 0;
+
       Match_list_node* tmp = match_list;
 
       int i;
@@ -318,6 +325,10 @@ char* get_message_with_matches_info(int socket_for_thread, int error_flag){
             tmp = tmp->next;
 
       }
+
+      match_list_free = 1;
+      pthread_cond_signal(&match_list_cond_var);
+      pthread_mutex_unlock(&match_list_mutex);
 
       if(lobby_found == 0){         //If no available lobbies were found, send a message to say that
             
@@ -942,6 +953,13 @@ void handle_client_death_in_lobby(int socket_for_thread, Match_list_node* match_
 
             if(found_another_host == 0){        //It means that there are no more players in the lobby, so the lobby must be deleted
 
+                  pthread_mutex_lock(&match_list_mutex);
+
+                  while(match_list_free == 0)
+                        pthread_cond_wait(&match_list_cond_var, &match_list_mutex);
+
+                  match_list_free = 0;
+
                   Match_list_node* tmp = match_list;
 
                   if(tmp == match_node){
@@ -955,6 +973,10 @@ void handle_client_death_in_lobby(int socket_for_thread, Match_list_node* match_
                               tmp = tmp->next;
                         }
                   }
+
+                  match_list_free = 1;
+                  pthread_cond_signal(&match_list_cond_var);
+                  pthread_mutex_unlock(&match_list_mutex);
 
                   free_match(match_node->match);
                   free(match_node);
