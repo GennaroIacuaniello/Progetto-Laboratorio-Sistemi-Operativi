@@ -27,10 +27,22 @@ void check_terminal_size();         //Initial function to warn the user in case 
 
 void handle_starting_interaction(int socket_fd);
 
+void handle_sigint(int sig) {
+    
+    printf("\033[?1049l");  //EXIT_ALT_SCREEN
+    
+    printf("\033[?25h");    //SHOW_CURSOR
+
+    fflush(stdout);
+    exit(0);
+
+}
 
 int main(int argc, char* argv[]) {
 
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGINT, handle_sigint);
+
     init_terminal();
 
     int socket_fd;
