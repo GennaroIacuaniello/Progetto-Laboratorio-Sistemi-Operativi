@@ -218,7 +218,7 @@ User* handle_login(int socket_for_thread){
                               pthread_exit(0);
 
                         default:
-                              char error_message[] = "\nOpzione non valida!\nInserire il numero relativo all'opzione che si desidera:1)Riprova login\n2)Effettuare la registrazione\n3)Esci\n";
+                              char error_message[] = "\nOpzione non valida!\nInserire il numero relativo all'opzione che si desidera:\n1)Riprova login\n2)Effettuare la registrazione\n3)Esci\n";
                               send_all(socket_for_thread, error_message, sizeof(error_message));
                               break;
                   }
