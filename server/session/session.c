@@ -13,6 +13,11 @@
 #include <time.h>
 #include <pthread.h>
 
+//Variables used to update match_list
+static pthread_mutex_t match_list_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t match_list_cond_var = PTHREAD_COND_INITIALIZER;    
+static int match_list_free = 1;
+
 //Global list of matches
 Match_list_node* match_list = NULL;
 
@@ -113,6 +118,13 @@ void lobby_creation(int socket_for_thread, User* current_user){
             pthread_exit(0);
       }
 
+      pthread_mutex_lock(&match_list_mutex);
+
+      while(match_list_free == 0)
+            pthread_cond_wait(&match_list_cond_var, &match_list_mutex);
+
+      match_list_free = 0;
+
       if(match_list == NULL){
             new_node->match = new_match;
             new_node->next = NULL;
@@ -122,6 +134,10 @@ void lobby_creation(int socket_for_thread, User* current_user){
             new_node->next = match_list;
             match_list = new_node;
       }
+
+      match_list_free = 1;
+      pthread_cond_signal(&match_list_cond_var);
+      pthread_mutex_unlock(&match_list_mutex);
 
       handle_being_in_lobby(socket_for_thread, new_node, current_user, 0);      //0 as id_in_match because the lobby has been just created by this user, so he is the only user and also the host
 
@@ -850,6 +866,13 @@ void check_host_change_or_match_cancellation(Match_list_node* match_node, int id
 
             if(found_another_host == 0){        //It means that there are no more players in the lobby, so the lobby must be deleted
 
+                  pthread_mutex_lock(&match_list_mutex);
+
+                  while(match_list_free == 0)
+                        pthread_cond_wait(&match_list_cond_var, &match_list_mutex);
+
+                  match_list_free = 0;
+
                   Match_list_node* tmp = match_list;
 
                   if(tmp == match_node){
@@ -863,6 +886,10 @@ void check_host_change_or_match_cancellation(Match_list_node* match_node, int id
                               tmp = tmp->next;
                         }
                   }
+
+                  match_list_free = 1;
+                  pthread_cond_signal(&match_list_cond_var);
+                  pthread_mutex_unlock(&match_list_mutex);
 
                   free_match(match_node->match);
                   free(match_node);
