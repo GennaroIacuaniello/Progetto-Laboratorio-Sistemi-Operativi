@@ -37,32 +37,39 @@ int main(int argc, char* argv[]) {
     struct sockaddr_in server_addr;
 
     if (argc != 3) {
-        fprintf(stderr, "usage: %s <server_ip> <port>\n", argv[0]);
+        fprintf(stderr, "usage: %s <server_ip/name> <port>\n", argv[0]);
         exit(1);
     }
 
     //Initial terminal size check
     check_terminal_size();
 
-    socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    //argv[1] is the host ("127.0.0.1" or "server-cont"), argv[2] is the port ("8080")
+    int err = getaddrinfo(argv[1], argv[2], &hints, &res);
+    if (err != 0) {
+        fprintf(stderr, "Errore getaddrinfo: %s\n", gai_strerror(err));
+        exit(1);
+    }
+
+    socket_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (socket_fd < 0) {
         perror("socket");
+        freeaddrinfo(res);
         exit(1);
     }
 
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port   = htons(atoi(argv[2]));
-
-    if (inet_pton(AF_INET, argv[1], &server_addr.sin_addr) <= 0) {
-        perror("inet_pton");
-        exit(1);
-    }
-
-    if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if (connect(socket_fd, res->ai_addr, res->ai_addrlen) < 0) {
         perror("connect");
+        freeaddrinfo(res);
         exit(1);
     }
+
+    freeaddrinfo(res);
 
     printf("Connesso al server %s:%s\n", argv[1], argv[2]);
     sleep(1);
