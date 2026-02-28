@@ -38,7 +38,7 @@ int main(int argc, char* argv[]){
       srand(time(NULL));
 
       //If it doesn't already exist, creates the "database" file of users
-      int fd = open("users.dat", O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+      int fd = open("data/users.dat", O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
       if(fd >= 0)
             close(fd);
       else{

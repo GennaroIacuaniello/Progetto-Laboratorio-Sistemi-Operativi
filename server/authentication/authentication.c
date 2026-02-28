@@ -38,7 +38,7 @@ unsigned int login(char* username, char* password){
 
       users_file_free = 0;
 
-      FILE* file_users = fopen("users.dat", "rb");
+      FILE* file_users = fopen("data/users.dat", "rb");
       unsigned long hashed_password = hash((unsigned char*)password);
 
       if(file_users != NULL){
@@ -91,7 +91,7 @@ unsigned int registration(char* username, char* password){
       
       users_file_free = 0;
 
-      FILE* file_users = fopen("users.dat", "rb+");
+      FILE* file_users = fopen("data/users.dat", "rb+");
 
       if(file_users != NULL){
             

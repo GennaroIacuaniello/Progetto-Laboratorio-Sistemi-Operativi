@@ -1,0 +1,30 @@
+services:
+  server:
+    build: ./server
+    container_name: server-cont
+    ports:
+      - "8080:8080"
+    networks:
+      - dnc_network
+    volumes:
+      - server_data:/app/data
+    
+  client:
+    build: ./client
+    container_name: client-cont
+    depends_on:
+      - server
+    networks:
+      - dnc_network
+    
+    command: ["server-cont", "8080"]
+    
+    #Rows to be sure to be able to play from terminal
+    stdin_open: true 
+    tty: true
+
+networks:
+  dnc_network:
+
+volumes:
+  server_data:

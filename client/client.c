@@ -33,9 +33,6 @@ int main(int argc, char* argv[]) {
     signal(SIGPIPE, SIG_IGN);
     init_terminal();
 
-    //Initial terminal size check
-    check_terminal_size();
-
     int socket_fd;
     struct sockaddr_in server_addr;
 
@@ -43,6 +40,9 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "usage: %s <server_ip> <port>\n", argv[0]);
         exit(1);
     }
+
+    //Initial terminal size check
+    check_terminal_size();
 
     socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_fd < 0) {
